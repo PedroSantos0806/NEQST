@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  edge-functions:
+    name: Edge Functions (Deno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Formatação
+        run: deno fmt --check supabase/functions scripts
+
+      - name: Lint
+        run: deno lint supabase/functions scripts
+
+      - name: Type-check
+        run: deno check supabase/functions/*/index.ts scripts/generate-qr.ts
+
+      - name: Testes unitários
+        run: deno test supabase/functions/_shared/
+
+  database:
+    name: Banco (migrations + fluxo da fila)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: neqst
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Migrations + testes funcionais
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/neqst
+        run: scripts/test-sql.sh
+
+      - name: db/full_setup.sql está em dia com as migrations
+        run: |
+          scripts/build-full-setup.sh
+          git diff --exit-code db/full_setup.sql \
+            || { echo "::error::db/full_setup.sql desatualizado — rode scripts/build-full-setup.sh"; exit 1; }
