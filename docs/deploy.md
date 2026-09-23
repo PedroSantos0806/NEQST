@@ -133,6 +133,12 @@ Depois gere e imprima os códigos: [`qr-codes.md`](qr-codes.md).
 3. `scripts/test-sql.sh` — migrations + fluxo da fila num Postgres 16
 4. Verificação de que `db/full_setup.sql` está em dia com as migrations
 
+As versões das dependências Deno ficam fixas em `deno.lock` (commitado) e
+o `supabase-js` é importado com versão exata. Sem isso, um release novo do
+`supabase-js` quebra o CI sozinho: o Deno recusa dependências publicadas há
+menos de 24h por política de supply chain. Para atualizar, troque a versão
+nos imports e rode `deno check` para regenerar o lockfile.
+
 Para deploy automático, adicione um job com `SUPABASE_ACCESS_TOKEN` e
 `SUPABASE_PROJECT_REF` nos secrets do repositório e rode `supabase db push`
 + `supabase functions deploy` na branch de staging.

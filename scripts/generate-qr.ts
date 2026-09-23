@@ -15,7 +15,7 @@
  * A folha HTML usa a biblioteca `qrcode` via CDN apenas no momento da
  * impressão — nenhum dado sensível sai do navegador.
  */
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "jsr:@supabase/supabase-js@2.116.0";
 import { buildCourtQrPayload } from "../supabase/functions/_shared/qr.ts";
 
 interface Court {

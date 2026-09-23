@@ -10,7 +10,6 @@ supabase/.env
 
 # Deno / Node
 node_modules/
-deno.lock
 *.log
 
 # Artefatos locais

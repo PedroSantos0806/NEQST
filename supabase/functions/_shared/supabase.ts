@@ -1,7 +1,7 @@
 /**
  * Clientes Supabase usados pelas Edge Functions.
  */
-import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2.116.0";
 import { ApiError, requireEnv } from "./http.ts";
 
 /**
