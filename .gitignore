@@ -1,0 +1,19 @@
+# Ambiente
+.env
+.env.*
+!.env.example
+
+# Supabase CLI
+supabase/.branches/
+supabase/.temp/
+supabase/.env
+
+# Deno / Node
+node_modules/
+deno.lock
+*.log
+
+# Artefatos locais
+qrcodes.html
+*.tmp
+.DS_Store
