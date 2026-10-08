@@ -15,12 +15,32 @@ lançamento em produção.
 
 ## 1. Schema
 
+> **Mergear um PR não mexe no banco.** O merge publica o app na Vercel;
+> o Supabase continua exatamente como estava. Toda vez que um PR tocar
+> `supabase/migrations/`, o schema precisa ser aplicado à mão — senão o
+> app novo chama funções que o banco ainda não tem, e o erro é
+> `function public.alguma_coisa(unknown) does not exist`.
+
 ```bash
 supabase link --project-ref <PROJECT_REF>
 supabase db push          # aplica supabase/migrations/
 ```
 
-Alternativa sem CLI: cole `db/full_setup.sql` no SQL Editor do Dashboard.
+Alternativa sem CLI: cole `db/full_setup.sql` no SQL Editor do
+Dashboard. Ele é **idempotente e sempre completo** — concatena todas as
+migrations na ordem, então rodar de novo depois de cada merge é a forma
+mais simples de manter o banco em dia. (Verificado: aplica duas vezes
+seguidas sem erro.)
+
+Para saber se o seu banco está atrasado:
+
+```sql
+-- compare com a lista de supabase/migrations/
+select proname from pg_proc
+where pronamespace = 'public'::regnamespace
+  and proname in ('promote_to_admin', 'admin_overview', 'my_profile_summary')
+order by 1;
+```
 
 Verifique depois:
 

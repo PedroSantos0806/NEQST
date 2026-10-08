@@ -133,6 +133,13 @@ parques e quadras, gera os QR Codes para imprimir e promove moderadores.
 
 ### Promover
 
+> **Antes**: `promote_to_admin` vem da migration `20261010120000_admin.sql`.
+> Se o schema do projeto ainda não foi atualizado, o SQL Editor responde
+> `function public.promote_to_admin(unknown) does not exist` — o merge do
+> PR publica o app, não o banco. Aplique o schema primeiro (ver
+> [`docs/deploy.md`](deploy.md#1-schema)): o caminho mais curto é colar
+> `db/full_setup.sql` inteiro, que é idempotente.
+
 **SQL Editor › New query**, trocando o e-mail pelo que você usou:
 
 ```sql
