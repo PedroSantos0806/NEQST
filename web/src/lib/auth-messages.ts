@@ -19,6 +19,40 @@ const MESSAGES: Array<[RegExp, string]> = [
   [/failed to fetch|network/i, "Sem conexão com o servidor. Verifique a internet e tente de novo."],
 ];
 
+/**
+ * Nenhuma chamada de auth pode ficar pendurada para sempre.
+ *
+ * O `signUp` dispara o e-mail de confirmação, e quando o provedor de
+ * e-mail do Supabase engasga a resposta demora — ou não vem. Sem um
+ * limite, o botão fica em "Aguarde…" indefinidamente e a pessoa não
+ * tem como saber se funcionou.
+ */
+export async function withTimeout<T>(
+  work: Promise<T>,
+  seconds = 20,
+  what = "O servidor não respondeu a tempo. Tente de novo em um minuto.",
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new TimeoutError(what)), seconds * 1000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export class TimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
 export function authMessage(error: { message?: string } | string | null | undefined): string {
   const raw = typeof error === "string" ? error : error?.message ?? "";
   for (const [pattern, text] of MESSAGES) {

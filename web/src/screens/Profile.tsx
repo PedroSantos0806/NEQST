@@ -321,6 +321,15 @@ export function Profile() {
             </div>
           )}
 
+          {data.profile?.role === "admin" && (
+            <Row
+              icon={<Lock size={18} />}
+              label="Administração"
+              hint="Quadras e pessoas"
+              onClick={() => navigate("/admin")}
+            />
+          )}
+
           <Row
             icon={<Check size={18} strokeWidth="2.4" />}
             label="Avisos da fila"

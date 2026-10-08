@@ -1,0 +1,90 @@
+<!-- Assunto sugerido: Você foi convidado para o NEQST -->
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#E6DDE2;margin:0;padding:24px 0;font-family:'Helvetica Neue',Arial,sans-serif">
+  <tr>
+    <td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#F1ECEF;border-radius:14px;overflow:hidden">
+
+        <!-- Cabeçalho -->
+        <tr>
+          <td style="background:#2F4629;padding:26px 28px">
+            <span style="font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:34px;color:#F1ECEF">Neqst</span>
+            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#C49051;margin-left:4px;vertical-align:middle"></span>
+            <div style="margin-top:6px;font-size:11px;font-weight:bold;letter-spacing:.14em;text-transform:uppercase;color:#D0C0C9">
+              Fila de quadras
+            </div>
+          </td>
+        </tr>
+
+        <!-- Corpo -->
+        <tr>
+          <td style="padding:30px 28px 8px">
+            <h1 style="margin:0 0 14px;font-size:27px;line-height:1.15;color:#0A0E0B">
+              Te chamaram para jogar
+            </h1>
+            <p style="margin:0 0 18px;font-size:15px;line-height:1.55;color:#2F4629">
+              Você foi convidado para o NEQST, o app que organiza a fila das quadras públicas. Aceite abaixo para criar a sua senha e começar.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Botão -->
+        <tr>
+          <td align="center" style="padding:8px 28px 24px">
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#C49051;border:2px solid #0A0E0B;border-radius:10px">
+                  <a href="{{ .ConfirmationURL }}"
+                     style="display:block;padding:16px 30px;font-size:16px;font-weight:bold;color:#0A0E0B;text-decoration:none">
+                    Aceitar o convite
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Alternativa -->
+        <tr>
+          <td style="padding:0 28px 24px">
+            <p style="margin:0 0 6px;font-size:12px;color:#5B4F55">
+              Se o botão não abrir, copie este endereço no navegador:
+            </p>
+            <p style="margin:0;font-size:11px;line-height:1.5;word-break:break-all">
+              <a href="{{ .ConfirmationURL }}" style="color:#2F4629">{{ .ConfirmationURL }}</a>
+            </p>
+          </td>
+        </tr>
+
+        <!-- Como funciona -->
+        <tr>
+          <td style="padding:0 28px 26px">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2F4629;border-radius:10px">
+              <tr>
+                <td style="padding:16px 18px">
+                  <div style="font-size:11px;font-weight:bold;letter-spacing:.12em;text-transform:uppercase;color:#C49051;margin-bottom:10px">
+                    Como funciona
+                  </div>
+                  <div style="font-size:13px;line-height:1.7;color:#F1ECEF">
+                    <strong>1.</strong> Chegue na quadra e escaneie o QR Code.<br>
+                    <strong>2.</strong> Escolha simples ou duplas e entre na fila.<br>
+                    <strong>3.</strong> A gente avisa quando a quadra liberar.
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Rodapé -->
+        <tr>
+          <td style="padding:18px 28px 24px;border-top:1px solid rgba(47,70,41,.18)">
+            <p style="margin:0;font-size:11px;line-height:1.6;color:#5B4F55">
+              Este convite foi enviado para {{ .Email }}. Se você não conhece quem convidou, pode ignorar.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>

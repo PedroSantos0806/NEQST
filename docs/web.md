@@ -85,6 +85,13 @@ abrir o app, porque a URL assinada aponta para o domínio antigo. O
 `scan-court` continua aceitando qualquer host (o que autentica é a
 assinatura), mas a câmera do celular vai abrir o endereço velho.
 
+## Login com Google, e-mails e administração
+
+Cada um desses tem um passo no painel do Supabase, reunidos em
+[`docs/auth.md`](auth.md): o cliente OAuth do Google, os templates de
+e-mail da marca (em [`supabase/templates/`](../supabase/templates/)) e
+como criar o administrador único.
+
 ## Rodando local
 
 ```bash
