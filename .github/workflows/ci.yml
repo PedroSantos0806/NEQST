@@ -23,10 +23,11 @@ jobs:
         run: deno lint supabase/functions scripts
 
       - name: Type-check
-        run: deno check supabase/functions/*/index.ts scripts/generate-qr.ts
+        run: deno check supabase/functions/*/index.ts scripts/*.ts
 
+      # --allow-env: os testes de CORS mexem em ALLOWED_ORIGINS.
       - name: Testes unitários
-        run: deno test supabase/functions/_shared/
+        run: deno test --allow-env supabase/functions/_shared/
 
   database:
     name: Banco (migrations + fluxo da fila)

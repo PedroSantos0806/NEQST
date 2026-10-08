@@ -3,10 +3,16 @@
  * Gera o conteúdo assinado dos QR Codes das quadras (US-02) e, opcionalmente,
  * uma folha HTML pronta para impressão.
  *
+ * O QR impresso usa o App Link https (APP_BASE_URL): a câmera nativa do
+ * Android abre o app da Play Store se instalado e, se não, o site. O
+ * esquema `neqst:` continua sendo emitido para referência, mas não é o
+ * que vai no papel — câmera de sistema não abre esquema próprio.
+ *
  * Uso:
  *   export SUPABASE_URL=...
  *   export SUPABASE_SERVICE_ROLE_KEY=...
  *   export QR_SIGNING_SECRET=...
+ *   export APP_BASE_URL=https://app.neqst.com.br
  *
  *   deno run --allow-env --allow-net scripts/generate-qr.ts
  *   deno run --allow-env --allow-net --allow-write scripts/generate-qr.ts --html qrcodes.html
@@ -16,7 +22,7 @@
  * impressão — nenhum dado sensível sai do navegador.
  */
 import { createClient } from "jsr:@supabase/supabase-js@2.116.0";
-import { buildCourtQrPayload } from "../supabase/functions/_shared/qr.ts";
+import { buildCourtQrPayload, buildCourtQrUrl } from "../supabase/functions/_shared/qr.ts";
 
 interface Court {
   id: string;
@@ -40,12 +46,12 @@ function arg(flag: string): string | undefined {
   return index >= 0 ? Deno.args[index + 1] : undefined;
 }
 
-function htmlSheet(items: Array<Court & { payload: string }>): string {
+function htmlSheet(items: Array<Court & { printUrl: string; payload: string }>): string {
   const cards = items.map((court) => `
     <article class="card">
       <h2>${court.name}</h2>
       <p class="address">${court.address ?? ""}</p>
-      <div class="qr" data-payload="${court.payload}"></div>
+      <div class="qr" data-payload="${court.printUrl}"></div>
       <p class="hint">Escaneie com o app NEQST para entrar na fila</p>
       <p class="meta">${court.slug} · v${court.qr_secret_version}</p>
     </article>`).join("\n");
@@ -86,6 +92,7 @@ ${cards}
 
 async function main(): Promise<void> {
   const secret = env("QR_SIGNING_SECRET");
+  const appBaseUrl = env("APP_BASE_URL");
   const client = createClient(env("SUPABASE_URL"), env("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { persistSession: false },
   });
@@ -112,13 +119,15 @@ async function main(): Promise<void> {
   const items = await Promise.all(
     data.map(async (court) => ({
       ...court,
+      printUrl: await buildCourtQrUrl(court.id, court.qr_secret_version, secret, appBaseUrl),
       payload: await buildCourtQrPayload(court.id, court.qr_secret_version, secret),
     })),
   );
 
   for (const court of items) {
     console.log(`${court.name} (${court.slug}) v${court.qr_secret_version}`);
-    console.log(`  ${court.payload}\n`);
+    console.log(`  impresso : ${court.printUrl}`);
+    console.log(`  esquema  : ${court.payload}\n`);
   }
 
   const htmlPath = arg("--html");

@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import {
   buildCourtQrPayload,
+  buildCourtQrUrl,
   InvalidQrError,
   parseCourtQrPayload,
   signCourt,
@@ -65,4 +66,80 @@ Deno.test("timingSafeEqual compara corretamente", () => {
   assert(timingSafeEqual("abc", "abc"));
   assert(!timingSafeEqual("abc", "abd"));
   assert(!timingSafeEqual("abc", "abcd"));
+});
+
+// -------------------------------------------------------------------
+// Formato App Link https (web + Play Store)
+// -------------------------------------------------------------------
+
+Deno.test("buildCourtQrUrl monta o App Link com versão e assinatura", async () => {
+  const url = await buildCourtQrUrl(COURT, 2, SECRET, "https://app.neqst.com.br");
+  const parsed = new URL(url);
+
+  assertEquals(parsed.origin, "https://app.neqst.com.br");
+  assertEquals(parsed.pathname, `/q/${COURT}`);
+  assertEquals(parsed.searchParams.get("v"), "2");
+  assertEquals(parsed.searchParams.get("s")?.length, 32);
+});
+
+Deno.test("buildCourtQrUrl tolera barra final na base", async () => {
+  const a = await buildCourtQrUrl(COURT, 1, SECRET, "https://app.neqst.com.br/");
+  const b = await buildCourtQrUrl(COURT, 1, SECRET, "https://app.neqst.com.br");
+  assertEquals(a, b);
+});
+
+Deno.test("as duas formas carregam a mesma assinatura", async () => {
+  const scheme = await buildCourtQrPayload(COURT, 1, SECRET);
+  const link = await buildCourtQrUrl(COURT, 1, SECRET, "https://app.neqst.com.br");
+
+  assertEquals(parseCourtQrPayload(scheme), parseCourtQrPayload(link));
+});
+
+Deno.test("verify aceita o App Link íntegro", async () => {
+  const url = await buildCourtQrUrl(COURT, 3, SECRET, "https://app.neqst.com.br");
+  const parsed = await verifyCourtQrPayload(url, SECRET);
+
+  assertEquals(parsed.courtId, COURT);
+  assertEquals(parsed.version, 3);
+});
+
+Deno.test("verify rejeita App Link com quadra trocada", async () => {
+  const url = await buildCourtQrUrl(COURT, 1, SECRET, "https://app.neqst.com.br");
+  const forged = url.replace(COURT, "00000000-0000-0000-0000-000000000000");
+
+  await assertRejects(() => verifyCourtQrPayload(forged, SECRET), InvalidQrError);
+});
+
+Deno.test("o host do App Link não autentica nada — a assinatura sim", async () => {
+  // Um QR hospedado em outro domínio continua válido se a assinatura
+  // confere; e continua inválido se não confere.
+  const signature = (await verifyCourtQrPayload(
+    await buildCourtQrUrl(COURT, 1, SECRET, "https://app.neqst.com.br"),
+    SECRET,
+  )).signature;
+
+  const elsewhere = `https://exemplo.test/q/${COURT}?v=1&s=${signature}`;
+  assertEquals((await verifyCourtQrPayload(elsewhere, SECRET)).courtId, COURT);
+
+  await assertRejects(
+    () => verifyCourtQrPayload(`https://exemplo.test/q/${COURT}?v=1&s=${"a".repeat(32)}`, SECRET),
+    InvalidQrError,
+  );
+});
+
+Deno.test("parse rejeita URLs que não são de quadra", () => {
+  assertThrows(() => parseCourtQrPayload("https://app.neqst.com.br/"), InvalidQrError);
+  assertThrows(
+    () => parseCourtQrPayload(`https://app.neqst.com.br/outro/${COURT}?v=1&s=${"a".repeat(32)}`),
+    InvalidQrError,
+  );
+  assertThrows(
+    () => parseCourtQrPayload(`https://app.neqst.com.br/q/${COURT}?s=${"a".repeat(32)}`),
+    InvalidQrError,
+    "Versão",
+  );
+  assertThrows(
+    () => parseCourtQrPayload(`https://app.neqst.com.br/q/nao-e-uuid?v=1&s=${"a".repeat(32)}`),
+    InvalidQrError,
+  );
 });

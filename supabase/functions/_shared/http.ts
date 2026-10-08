@@ -2,17 +2,60 @@
  * Helpers de HTTP compartilhados pelas Edge Functions do NEQST.
  */
 
+const ALLOWED_HEADERS = "authorization, x-client-info, apikey, content-type, x-cron-secret";
+const ALLOWED_METHODS = "POST, GET, PATCH, DELETE, OPTIONS";
+
+/**
+ * Origens liberadas, de ALLOWED_ORIGINS (lista separada por vírgula).
+ *
+ * O app nativo não manda Origin, então CORS não o afeta. Quem precisa
+ * disso é a versão web: com a allow-list, um site de terceiros não
+ * consegue chamar a API a partir do navegador de quem está logado.
+ * Sem a variável configurada, cai em "*" — serve para desenvolvimento,
+ * mas produção deve declarar as origens (ver docs/deploy.md).
+ */
+export function allowedOrigins(): string[] {
+  return (Deno.env.get("ALLOWED_ORIGINS") ?? "")
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
+    .filter((origin) => origin.length > 0);
+}
+
+export function corsHeadersFor(req: Request | null): Record<string, string> {
+  const allowList = allowedOrigins();
+  const origin = req?.headers.get("Origin") ?? null;
+
+  const allowOrigin = allowList.length === 0
+    ? "*"
+    : origin && allowList.includes(origin.replace(/\/+$/, ""))
+    ? origin
+    : allowList[0];
+
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": ALLOWED_HEADERS,
+    "Access-Control-Allow-Methods": ALLOWED_METHODS,
+    "Access-Control-Max-Age": "86400",
+    // Sem Vary, um cache compartilhado devolveria a origem de outro site.
+    "Vary": "Origin",
+  };
+}
+
+/** Compatibilidade: cabeçalhos permissivos sem acesso ao request. */
 export const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-cron-secret",
-  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+  "Access-Control-Allow-Headers": ALLOWED_HEADERS,
+  "Access-Control-Allow-Methods": ALLOWED_METHODS,
 };
 
-export function json(body: unknown, status = 200): Response {
+export function json(
+  body: unknown,
+  status = 200,
+  cors: Record<string, string> = corsHeaders,
+): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...cors, "Content-Type": "application/json" },
   });
 }
 
@@ -29,11 +72,15 @@ export class ApiError extends Error {
   }
 }
 
-export function errorResponse(error: unknown): Response {
+export function errorResponse(
+  error: unknown,
+  cors: Record<string, string> = corsHeaders,
+): Response {
   if (error instanceof ApiError) {
     return json(
       { error: { code: error.code, message: error.message, details: error.details } },
       error.status,
+      cors,
     );
   }
 
@@ -41,11 +88,15 @@ export function errorResponse(error: unknown): Response {
   return json(
     { error: { code: "INTERNAL_ERROR", message: "Erro inesperado. Tente novamente." } },
     500,
+    cors,
   );
 }
 
-export function handlePreflight(req: Request): Response | null {
-  return req.method === "OPTIONS" ? new Response("ok", { headers: corsHeaders }) : null;
+export function handlePreflight(
+  req: Request,
+  cors: Record<string, string> = corsHeadersFor(req),
+): Response | null {
+  return req.method === "OPTIONS" ? new Response(null, { status: 204, headers: cors }) : null;
 }
 
 export function requireMethod(req: Request, method: string): void {
@@ -96,4 +147,45 @@ export function postgrestError(
     mapped?.status ?? 400,
     error.details,
   );
+}
+
+// ---------------------------------------------------------------------
+// Wrapper das Edge Functions
+// ---------------------------------------------------------------------
+
+/** Reescreve os cabeçalhos de CORS de uma resposta já montada. */
+export function withCorsHeaders(
+  response: Response,
+  cors: Record<string, string>,
+): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(cors)) headers.set(name, value);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+/**
+ * Ponto de entrada de toda Edge Function: resolve o CORS da origem que
+ * chamou, responde ao preflight e traduz exceções em erro de API.
+ *
+ * Centralizar isso é o que garante que a versão web receba os
+ * cabeçalhos certos em todas as rotas — inclusive nas de erro, onde
+ * esquecer o CORS faz o navegador esconder a mensagem do usuário.
+ */
+export function serve(handler: (req: Request) => Promise<Response>): void {
+  Deno.serve(async (req) => {
+    const cors = corsHeadersFor(req);
+
+    const preflight = handlePreflight(req, cors);
+    if (preflight) return preflight;
+
+    try {
+      return withCorsHeaders(await handler(req), cors);
+    } catch (error) {
+      return errorResponse(error, cors);
+    }
+  });
 }

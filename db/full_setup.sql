@@ -1689,3 +1689,1232 @@ revoke all on function public.run_maintenance() from public, anon, authenticated
 --   select cron.schedule('neqst-maintenance', '*/15 * * * *',
 --                        $cron$ select public.run_maintenance(); $cron$);
 -- ---------------------------------------------------------------------
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008120000_history.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 2
+-- 10. Histórico do usuário (quadras visitadas, partidas jogadas)
+--
+-- Não precisa de tabela nova: a Sprint 1 já grava started_at/ended_at
+-- em queue_entries. O histórico é uma leitura sobre esses dados.
+-- =====================================================================
+
+-- Índice que sustenta a paginação do histórico por jogador.
+create index if not exists queue_entries_history_idx
+  on public.queue_entries (court_id, ended_at desc)
+  where status = 'done';
+
+create index if not exists queue_entry_members_history_idx
+  on public.queue_entry_members (user_id, created_at desc);
+
+-- ---------------------------------------------------------------------
+-- Partidas jogadas pelo usuário logado, mais recentes primeiro.
+--
+-- p_before: cursor de paginação — passe o ended_at da última linha da
+-- página anterior (keyset pagination, estável mesmo com novas partidas).
+-- ---------------------------------------------------------------------
+create or replace function public.my_match_history(
+  p_limit  integer default 20,
+  p_before timestamptz default null
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with played as (
+    select
+      e.id          as entry_id,
+      e.court_id,
+      c.name        as court_name,
+      c.slug        as court_slug,
+      c.photo_url   as court_photo_url,
+      e.mode,
+      e.joined_at,
+      e.started_at,
+      e.ended_at,
+      m.role        as my_role,
+      greatest(
+        round(extract(epoch from (e.ended_at - e.started_at)) / 60)::integer,
+        0
+      )             as duration_minutes
+    from public.queue_entry_members m
+    join public.queue_entries e on e.id = m.entry_id
+    join public.courts c        on c.id = e.court_id
+    where m.user_id = auth.uid()
+      and e.status = 'done'
+      and e.ended_at is not null
+      and (p_before is null or e.ended_at < p_before)
+    order by e.ended_at desc
+    limit least(greatest(coalesce(p_limit, 20), 1), 100)
+  )
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'entry_id',         p.entry_id,
+        'court_id',         p.court_id,
+        'court_name',       p.court_name,
+        'court_slug',       p.court_slug,
+        'court_photo_url',  p.court_photo_url,
+        'mode',             p.mode,
+        'joined_at',        p.joined_at,
+        'started_at',       p.started_at,
+        'ended_at',         p.ended_at,
+        'duration_minutes', p.duration_minutes,
+        'my_role',          p.my_role,
+        -- Com quem joguei (vazio quando foi individual).
+        'teammates', (
+          select coalesce(
+            jsonb_agg(jsonb_build_object(
+              'user_id',    pr.id,
+              'username',   pr.username,
+              'full_name',  pr.full_name,
+              'avatar_url', pr.avatar_url
+            )),
+            '[]'::jsonb
+          )
+          from public.queue_entry_members om
+          join public.profiles pr on pr.id = om.user_id
+          where om.entry_id = p.entry_id and om.user_id <> auth.uid()
+        )
+      )
+      order by p.ended_at desc
+    ),
+    '[]'::jsonb
+  )
+  from played p;
+$$;
+
+comment on function public.my_match_history(integer, timestamptz) is
+  'Partidas concluídas do usuário logado, com paginação por cursor (p_before = ended_at da última linha).';
+
+-- ---------------------------------------------------------------------
+-- Quadras visitadas pelo usuário logado, com contagem e última visita.
+-- ---------------------------------------------------------------------
+create or replace function public.my_visited_courts(p_limit integer default 50)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'court_id',       v.court_id,
+        'court_name',     v.court_name,
+        'court_slug',     v.court_slug,
+        'photo_url',      v.photo_url,
+        'latitude',       v.latitude,
+        'longitude',      v.longitude,
+        'matches_played', v.matches_played,
+        'minutes_played', v.minutes_played,
+        'first_visit_at', v.first_visit_at,
+        'last_visit_at',  v.last_visit_at
+      )
+      order by v.last_visit_at desc
+    ),
+    '[]'::jsonb
+  )
+  from (
+    select
+      c.id        as court_id,
+      c.name      as court_name,
+      c.slug      as court_slug,
+      c.photo_url,
+      c.latitude,
+      c.longitude,
+      count(*)::integer as matches_played,
+      coalesce(sum(
+        greatest(round(extract(epoch from (e.ended_at - e.started_at)) / 60)::integer, 0)
+      ), 0)::integer   as minutes_played,
+      min(e.ended_at)  as first_visit_at,
+      max(e.ended_at)  as last_visit_at
+    from public.queue_entry_members m
+    join public.queue_entries e on e.id = m.entry_id
+    join public.courts c        on c.id = e.court_id
+    where m.user_id = auth.uid()
+      and e.status = 'done'
+      and e.ended_at is not null
+    group by c.id, c.name, c.slug, c.photo_url, c.latitude, c.longitude
+    order by max(e.ended_at) desc
+    limit least(greatest(coalesce(p_limit, 50), 1), 200)
+  ) v;
+$$;
+
+comment on function public.my_visited_courts(integer) is
+  'Quadras onde o usuário logado já jogou, com partidas, minutos e última visita.';
+
+-- ---------------------------------------------------------------------
+-- Resumo para a tela de perfil (US-01 + histórico da Sprint 2).
+-- ---------------------------------------------------------------------
+create or replace function public.my_profile_summary()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'profile', (
+      select jsonb_build_object(
+        'user_id',    p.id,
+        'username',   p.username,
+        'full_name',  p.full_name,
+        'email',      p.email,
+        'avatar_url', p.avatar_url,
+        'role',       p.role,
+        'created_at', p.created_at
+      )
+      from public.profiles p where p.id = auth.uid()
+    ),
+    'stats', (
+      select jsonb_build_object(
+        'matches_played', count(*)::integer,
+        'minutes_played', coalesce(sum(
+          greatest(round(extract(epoch from (e.ended_at - e.started_at)) / 60)::integer, 0)
+        ), 0)::integer,
+        'courts_visited', count(distinct e.court_id)::integer,
+        'last_match_at',  max(e.ended_at)
+      )
+      from public.queue_entry_members m
+      join public.queue_entries e on e.id = m.entry_id
+      where m.user_id = auth.uid() and e.status = 'done' and e.ended_at is not null
+    ),
+    'active_entries', public.my_active_entries()
+  );
+$$;
+
+comment on function public.my_profile_summary() is
+  'Uma chamada para a tela de perfil: dados, estatísticas e filas ativas.';
+
+revoke all on function public.my_match_history(integer, timestamptz) from public;
+revoke all on function public.my_visited_courts(integer)             from public;
+revoke all on function public.my_profile_summary()                   from public;
+
+grant execute on function public.my_match_history(integer, timestamptz) to authenticated;
+grant execute on function public.my_visited_courts(integer)             to authenticated;
+grant execute on function public.my_profile_summary()                   to authenticated;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008120100_court_reviews.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 2
+-- 11. Sistema de avaliação da quadra
+--
+-- Só avalia quem jogou: exigir uma partida concluída na quadra é o que
+-- separa avaliação de opinião aleatória, e não custa nada verificar —
+-- o histórico da migration 10 já tem esse dado.
+-- =====================================================================
+
+create table if not exists public.court_reviews (
+  id          uuid primary key default gen_random_uuid(),
+  court_id    uuid not null references public.courts (id) on delete cascade,
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  rating      smallint not null check (rating between 1 and 5),
+  comment     text,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+
+  -- Uma avaliação por jogador por quadra (editável).
+  unique (court_id, user_id),
+
+  constraint court_reviews_comment_length
+    check (comment is null or char_length(comment) <= 1000)
+);
+
+comment on table public.court_reviews is
+  'Avaliação de 1 a 5 por jogador por quadra, com comentário opcional.';
+
+create index if not exists court_reviews_court_idx on public.court_reviews (court_id, created_at desc);
+create index if not exists court_reviews_user_idx  on public.court_reviews (user_id, created_at desc);
+
+drop trigger if exists court_reviews_set_updated_at on public.court_reviews;
+create trigger court_reviews_set_updated_at
+  before update on public.court_reviews
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------
+-- Agregados desnormalizados na quadra (a tela de lista não faz join)
+-- ---------------------------------------------------------------------
+alter table public.courts add column if not exists rating_avg   numeric(3,2);
+alter table public.courts add column if not exists rating_count integer not null default 0;
+
+comment on column public.courts.rating_avg is
+  'Média das avaliações, mantida por trigger. Null quando ainda não há avaliação.';
+
+create or replace function public.refresh_court_rating(p_court_id uuid)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.courts c
+     set rating_avg   = agg.avg_rating,
+         rating_count = agg.total
+    from (
+      select round(avg(r.rating)::numeric, 2) as avg_rating,
+             count(*)::integer                as total
+      from public.court_reviews r
+      where r.court_id = p_court_id
+    ) agg
+   where c.id = p_court_id;
+$$;
+
+create or replace function public.court_reviews_sync_rating()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.refresh_court_rating(coalesce(new.court_id, old.court_id));
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists court_reviews_sync on public.court_reviews;
+create trigger court_reviews_sync
+  after insert or update or delete on public.court_reviews
+  for each row execute function public.court_reviews_sync_rating();
+
+-- ---------------------------------------------------------------------
+-- Pode avaliar? (precisa de pelo menos uma partida concluída na quadra)
+-- ---------------------------------------------------------------------
+create or replace function public.can_review_court(p_court_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.queue_entry_members m
+    join public.queue_entries e on e.id = m.entry_id
+    where m.user_id = auth.uid()
+      and e.court_id = p_court_id
+      and e.status = 'done'
+  );
+$$;
+
+-- ---------------------------------------------------------------------
+-- Criar ou atualizar a própria avaliação
+--   NQ010 — ainda não jogou nesta quadra
+-- ---------------------------------------------------------------------
+create or replace function public.rate_court(
+  p_court_id uuid,
+  p_rating   smallint,
+  p_comment  text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user   uuid := auth.uid();
+  v_review public.court_reviews%rowtype;
+begin
+  if v_user is null then
+    raise exception 'Autenticação obrigatória' using errcode = 'NQ001';
+  end if;
+
+  if p_rating is null or p_rating < 1 or p_rating > 5 then
+    raise exception 'A nota deve ficar entre 1 e 5' using errcode = 'NQ011';
+  end if;
+
+  if not exists (select 1 from public.courts c where c.id = p_court_id) then
+    raise exception 'Quadra não encontrada' using errcode = 'NQ003';
+  end if;
+
+  if not public.can_review_court(p_court_id) then
+    raise exception 'Jogue nesta quadra antes de avaliá-la' using errcode = 'NQ010';
+  end if;
+
+  insert into public.court_reviews (court_id, user_id, rating, comment)
+  values (p_court_id, v_user, p_rating, nullif(trim(coalesce(p_comment, '')), ''))
+  on conflict (court_id, user_id) do update
+    set rating  = excluded.rating,
+        comment = excluded.comment
+  returning * into v_review;
+
+  return jsonb_build_object(
+    'review_id',    v_review.id,
+    'court_id',     v_review.court_id,
+    'rating',       v_review.rating,
+    'comment',      v_review.comment,
+    'created_at',   v_review.created_at,
+    'updated_at',   v_review.updated_at,
+    'court_rating', (
+      select jsonb_build_object('average', c.rating_avg, 'count', c.rating_count)
+      from public.courts c where c.id = p_court_id
+    )
+  );
+end;
+$$;
+
+create or replace function public.delete_my_court_review(p_court_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_deleted integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Autenticação obrigatória' using errcode = 'NQ001';
+  end if;
+
+  delete from public.court_reviews
+  where court_id = p_court_id and user_id = auth.uid();
+  get diagnostics v_deleted = row_count;
+
+  return jsonb_build_object('court_id', p_court_id, 'deleted', v_deleted > 0);
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Avaliações de uma quadra (lista pública, paginada)
+-- ---------------------------------------------------------------------
+create or replace function public.court_reviews_page(
+  p_court_id uuid,
+  p_limit    integer default 20,
+  p_before   timestamptz default null
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'court_id', p_court_id,
+    'summary', (
+      select jsonb_build_object(
+        'average', c.rating_avg,
+        'count',   c.rating_count,
+        'distribution', (
+          select coalesce(jsonb_object_agg(d.rating::text, d.total), '{}'::jsonb)
+          from (
+            select r.rating, count(*)::integer as total
+            from public.court_reviews r
+            where r.court_id = p_court_id
+            group by r.rating
+          ) d
+        )
+      )
+      from public.courts c where c.id = p_court_id
+    ),
+    'my_review', (
+      select jsonb_build_object('rating', r.rating, 'comment', r.comment, 'updated_at', r.updated_at)
+      from public.court_reviews r
+      where r.court_id = p_court_id and r.user_id = auth.uid()
+    ),
+    'can_review', public.can_review_court(p_court_id),
+    'reviews', (
+      select coalesce(
+        jsonb_agg(jsonb_build_object(
+          'review_id',  s.id,
+          'rating',     s.rating,
+          'comment',    s.comment,
+          'created_at', s.created_at,
+          'updated_at', s.updated_at,
+          'author', jsonb_build_object(
+            'user_id',    s.user_id,
+            'username',   s.username,
+            'full_name',  s.full_name,
+            'avatar_url', s.avatar_url
+          )
+        ) order by s.created_at desc),
+        '[]'::jsonb
+      )
+      from (
+        select r.id, r.rating, r.comment, r.created_at, r.updated_at,
+               r.user_id, p.username, p.full_name, p.avatar_url
+        from public.court_reviews r
+        left join public.profiles p on p.id = r.user_id
+        where r.court_id = p_court_id
+          and (p_before is null or r.created_at < p_before)
+        order by r.created_at desc
+        limit least(greatest(coalesce(p_limit, 20), 1), 100)
+      ) s
+    )
+  );
+$$;
+
+-- ---------------------------------------------------------------------
+-- RLS
+-- ---------------------------------------------------------------------
+alter table public.court_reviews enable row level security;
+
+drop policy if exists "reviews: leitura pública" on public.court_reviews;
+create policy "reviews: leitura pública"
+  on public.court_reviews for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "reviews: dono gerencia" on public.court_reviews;
+create policy "reviews: dono gerencia"
+  on public.court_reviews for all
+  to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+drop policy if exists "reviews: staff remove abuso" on public.court_reviews;
+create policy "reviews: staff remove abuso"
+  on public.court_reviews for delete
+  to authenticated
+  using (public.is_staff());
+
+revoke all on public.court_reviews from anon, authenticated;
+grant select on public.court_reviews to anon, authenticated;
+
+revoke all on function public.refresh_court_rating(uuid)        from public;
+revoke all on function public.rate_court(uuid, smallint, text)  from public;
+revoke all on function public.delete_my_court_review(uuid)      from public;
+
+grant execute on function public.rate_court(uuid, smallint, text)                    to authenticated;
+grant execute on function public.delete_my_court_review(uuid)                        to authenticated;
+grant execute on function public.can_review_court(uuid)                              to authenticated;
+grant execute on function public.court_reviews_page(uuid, integer, timestamptz)      to anon, authenticated;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008120200_court_photos.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 2
+-- 12. Upload de fotos da quadra
+--
+-- O arquivo vai para o Supabase Storage; o banco guarda o metadado e o
+-- estado de moderação. Fotos entram como 'pending' e só aparecem no app
+-- depois de aprovadas — conteúdo enviado por usuário em app de loja
+-- precisa de um caminho de moderação.
+-- =====================================================================
+
+do $$ begin
+  create type public.photo_status as enum ('pending', 'approved', 'rejected');
+exception when duplicate_object then null; end $$;
+
+create table if not exists public.court_photos (
+  id            uuid primary key default gen_random_uuid(),
+  court_id      uuid not null references public.courts (id) on delete cascade,
+  user_id       uuid not null references auth.users (id) on delete cascade,
+  storage_path  text not null unique,
+  status        public.photo_status not null default 'pending',
+  caption       text,
+  content_type  text not null default 'image/jpeg',
+  size_bytes    integer,
+  width         integer,
+  height        integer,
+  is_uploaded   boolean not null default false,
+  is_primary    boolean not null default false,
+  moderated_by  uuid references auth.users (id) on delete set null,
+  moderated_at  timestamptz,
+  reject_reason text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+
+  constraint court_photos_caption_length
+    check (caption is null or char_length(caption) <= 300),
+  constraint court_photos_content_type
+    check (content_type in ('image/jpeg', 'image/png', 'image/webp')),
+  constraint court_photos_size
+    check (size_bytes is null or size_bytes between 1 and 10485760)
+);
+
+comment on table public.court_photos is
+  'Fotos enviadas pelos jogadores. Só status=approved e is_uploaded chegam ao app.';
+comment on column public.court_photos.is_uploaded is
+  'A linha nasce antes do upload (para gerar a URL assinada) e é confirmada depois.';
+
+create index if not exists court_photos_court_idx
+  on public.court_photos (court_id, created_at desc);
+
+create index if not exists court_photos_approved_idx
+  on public.court_photos (court_id, created_at desc)
+  where status = 'approved' and is_uploaded;
+
+create index if not exists court_photos_moderation_idx
+  on public.court_photos (created_at)
+  where status = 'pending' and is_uploaded;
+
+-- Uma foto principal por quadra.
+create unique index if not exists court_photos_one_primary_per_court
+  on public.court_photos (court_id)
+  where is_primary;
+
+drop trigger if exists court_photos_set_updated_at on public.court_photos;
+create trigger court_photos_set_updated_at
+  before update on public.court_photos
+  for each row execute function public.set_updated_at();
+
+-- Limite de fotos pendentes por jogador por quadra, para conter flood.
+create or replace function public.enforce_photo_quota()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare v_pending integer;
+begin
+  select count(*) into v_pending
+  from public.court_photos p
+  where p.user_id = new.user_id
+    and p.court_id = new.court_id
+    and p.status = 'pending';
+
+  if v_pending >= 5 then
+    raise exception 'Você já tem 5 fotos aguardando moderação nesta quadra'
+      using errcode = 'NQ012';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists court_photos_quota on public.court_photos;
+create trigger court_photos_quota
+  before insert on public.court_photos
+  for each row execute function public.enforce_photo_quota();
+
+-- ---------------------------------------------------------------------
+-- Foto principal aprovada alimenta courts.cover_photo_path
+--
+-- Coluna separada de courts.photo_url de propósito: aqui vai o CAMINHO
+-- no Storage (bucket privado), que o cliente troca por uma URL assinada.
+-- photo_url continua sendo uma URL pública externa, quando houver.
+-- ---------------------------------------------------------------------
+alter table public.courts add column if not exists cover_photo_path text;
+
+comment on column public.courts.cover_photo_path is
+  'Caminho no bucket court-photos da foto de capa aprovada. Precisa de URL assinada.';
+create or replace function public.sync_court_primary_photo()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_court uuid := coalesce(new.court_id, old.court_id);
+  v_path  text;
+begin
+  select p.storage_path into v_path
+  from public.court_photos p
+  where p.court_id = v_court
+    and p.status = 'approved'
+    and p.is_uploaded
+  order by p.is_primary desc, p.created_at
+  limit 1;
+
+  update public.courts
+     set cover_photo_path = v_path
+   where id = v_court
+     and cover_photo_path is distinct from v_path;
+
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists court_photos_sync_primary on public.court_photos;
+create trigger court_photos_sync_primary
+  after insert or update or delete on public.court_photos
+  for each row execute function public.sync_court_primary_photo();
+
+comment on function public.sync_court_primary_photo() is
+  'Mantém courts.cover_photo_path no caminho da foto de capa aprovada (ou nulo).';
+
+-- ---------------------------------------------------------------------
+-- Fotos aprovadas de uma quadra (consumo público)
+-- ---------------------------------------------------------------------
+create or replace function public.court_photos_page(
+  p_court_id uuid,
+  p_limit    integer default 20
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    jsonb_agg(jsonb_build_object(
+      'photo_id',     s.id,
+      'storage_path', s.storage_path,
+      'caption',      s.caption,
+      'width',        s.width,
+      'height',       s.height,
+      'is_primary',   s.is_primary,
+      'created_at',   s.created_at,
+      'author', jsonb_build_object(
+        'user_id',  s.user_id,
+        'username', s.username
+      )
+    ) order by s.is_primary desc, s.created_at desc),
+    '[]'::jsonb
+  )
+  from (
+    select p.id, p.storage_path, p.caption, p.width, p.height, p.is_primary,
+           p.created_at, p.user_id, pr.username
+    from public.court_photos p
+    left join public.profiles pr on pr.id = p.user_id
+    where p.court_id = p_court_id
+      and p.status = 'approved'
+      and p.is_uploaded
+    order by p.is_primary desc, p.created_at desc
+    limit least(greatest(coalesce(p_limit, 20), 1), 100)
+  ) s;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Moderação (staff/admin)
+-- ---------------------------------------------------------------------
+create or replace function public.moderate_court_photo(
+  p_photo_id uuid,
+  p_approve  boolean,
+  p_reason   text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_photo public.court_photos%rowtype;
+begin
+  if not public.is_staff() then
+    raise exception 'Ação restrita à operação' using errcode = 'NQ008';
+  end if;
+
+  update public.court_photos
+     set status        = case when p_approve then 'approved'::public.photo_status
+                                             else 'rejected'::public.photo_status end,
+         moderated_by  = auth.uid(),
+         moderated_at  = now(),
+         reject_reason = case when p_approve then null else p_reason end
+   where id = p_photo_id
+  returning * into v_photo;
+
+  if not found then
+    raise exception 'Foto não encontrada' using errcode = 'NQ013';
+  end if;
+
+  return jsonb_build_object(
+    'photo_id', v_photo.id,
+    'court_id', v_photo.court_id,
+    'status',   v_photo.status
+  );
+end;
+$$;
+
+create or replace function public.set_primary_court_photo(p_photo_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_photo public.court_photos%rowtype;
+begin
+  if not public.is_staff() then
+    raise exception 'Ação restrita à operação' using errcode = 'NQ008';
+  end if;
+
+  select * into v_photo from public.court_photos where id = p_photo_id;
+  if not found then
+    raise exception 'Foto não encontrada' using errcode = 'NQ013';
+  end if;
+
+  if v_photo.status <> 'approved' or not v_photo.is_uploaded then
+    raise exception 'Só uma foto aprovada pode ser a principal' using errcode = 'NQ009';
+  end if;
+
+  update public.court_photos set is_primary = false
+   where court_id = v_photo.court_id and is_primary and id <> p_photo_id;
+
+  update public.court_photos set is_primary = true where id = p_photo_id;
+
+  return jsonb_build_object('photo_id', p_photo_id, 'court_id', v_photo.court_id, 'is_primary', true);
+end;
+$$;
+
+-- Fila de moderação
+create or replace function public.pending_court_photos(p_limit integer default 50)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select case when public.is_staff() then coalesce(
+    (select jsonb_agg(jsonb_build_object(
+        'photo_id',     p.id,
+        'court_id',     p.court_id,
+        'court_name',   c.name,
+        'storage_path', p.storage_path,
+        'caption',      p.caption,
+        'created_at',   p.created_at,
+        'author',       jsonb_build_object('user_id', p.user_id, 'username', pr.username)
+      ) order by p.created_at)
+     from public.court_photos p
+     join public.courts c on c.id = p.court_id
+     left join public.profiles pr on pr.id = p.user_id
+     where p.status = 'pending' and p.is_uploaded
+     limit least(greatest(coalesce(p_limit, 50), 1), 200)),
+    '[]'::jsonb
+  ) else '[]'::jsonb end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- RLS
+-- ---------------------------------------------------------------------
+alter table public.court_photos enable row level security;
+
+drop policy if exists "fotos: aprovadas são públicas" on public.court_photos;
+create policy "fotos: aprovadas são públicas"
+  on public.court_photos for select
+  to anon, authenticated
+  using ((status = 'approved' and is_uploaded) or user_id = auth.uid() or public.is_staff());
+
+drop policy if exists "fotos: dono remove a própria" on public.court_photos;
+create policy "fotos: dono remove a própria"
+  on public.court_photos for delete
+  to authenticated
+  using (user_id = auth.uid() or public.is_staff());
+
+revoke all on public.court_photos from anon, authenticated;
+grant select on public.court_photos to anon, authenticated;
+grant delete on public.court_photos to authenticated;
+
+revoke all on function public.moderate_court_photo(uuid, boolean, text) from public;
+revoke all on function public.set_primary_court_photo(uuid)             from public;
+
+grant execute on function public.court_photos_page(uuid, integer)             to anon, authenticated;
+grant execute on function public.moderate_court_photo(uuid, boolean, text)    to authenticated;
+grant execute on function public.set_primary_court_photo(uuid)                to authenticated;
+grant execute on function public.pending_court_photos(integer)                to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Bucket do Storage
+--
+-- Privado: o app recebe URLs assinadas. Assim uma foto rejeitada deixa
+-- de ser acessível, o que um bucket público não permitiria.
+-- Em Postgres puro (CI) o schema storage não existe — daí o guard.
+-- ---------------------------------------------------------------------
+do $$
+begin
+  if exists (select 1 from information_schema.tables
+             where table_schema = 'storage' and table_name = 'buckets') then
+
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('court-photos', 'court-photos', false, 10485760,
+            array['image/jpeg', 'image/png', 'image/webp'])
+    on conflict (id) do update
+      set file_size_limit    = excluded.file_size_limit,
+          allowed_mime_types = excluded.allowed_mime_types;
+
+    -- Leitura apenas de objetos cuja linha correspondente está aprovada.
+    execute $pol$
+      drop policy if exists "court-photos: leitura de aprovadas" on storage.objects;
+      create policy "court-photos: leitura de aprovadas"
+        on storage.objects for select
+        to authenticated
+        using (
+          bucket_id = 'court-photos'
+          and exists (
+            select 1 from public.court_photos p
+            where p.storage_path = storage.objects.name
+              and ((p.status = 'approved' and p.is_uploaded)
+                   or p.user_id = auth.uid()
+                   or public.is_staff())
+          )
+        );
+    $pol$;
+
+    -- O upload em si acontece por URL assinada emitida pela Edge
+    -- Function, que usa service_role. O cliente não escreve direto.
+    execute $pol$
+      drop policy if exists "court-photos: sem escrita direta" on storage.objects;
+    $pol$;
+  end if;
+end $$;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008120300_heatmap.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 2
+-- 13. Mapa de calor — indicador simples cheio/vazio por quadra
+--
+-- Duas leituras:
+--   agora      -> derivado da fila ao vivo (sem tabela nova)
+--   típico     -> snapshots horários, para "costuma encher nesse horário"
+-- =====================================================================
+
+do $$ begin
+  create type public.occupancy_level as enum ('empty', 'low', 'busy', 'full');
+exception when duplicate_object then null; end $$;
+
+-- ---------------------------------------------------------------------
+-- Classificação do nível de ocupação
+--
+-- Os limites vivem na quadra, não no código: uma quadra de clube com 2
+-- times na fila está tranquila; uma quadra pública, cheia.
+-- ---------------------------------------------------------------------
+alter table public.courts add column if not exists busy_threshold integer not null default 2;
+alter table public.courts add column if not exists full_threshold integer not null default 5;
+
+do $$ begin
+  alter table public.courts
+    add constraint courts_thresholds_order check (busy_threshold < full_threshold);
+exception when duplicate_object then null; end $$;
+
+comment on column public.courts.busy_threshold is
+  'A partir de quantos times na fila a quadra é considerada movimentada.';
+comment on column public.courts.full_threshold is
+  'A partir de quantos times na fila a quadra é considerada cheia.';
+
+create or replace function public.occupancy_of(
+  p_teams_waiting integer,
+  p_has_match     boolean,
+  p_busy          integer default 2,
+  p_full          integer default 5
+)
+returns public.occupancy_level
+language sql
+immutable
+set search_path = ''
+as $$
+  select case
+    when coalesce(p_teams_waiting, 0) >= coalesce(p_full, 5) then 'full'::public.occupancy_level
+    when coalesce(p_teams_waiting, 0) >= coalesce(p_busy, 2) then 'busy'::public.occupancy_level
+    when coalesce(p_teams_waiting, 0) > 0 or coalesce(p_has_match, false)
+      then 'low'::public.occupancy_level
+    else 'empty'::public.occupancy_level
+  end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Snapshots horários (movimento típico por dia da semana e hora)
+-- ---------------------------------------------------------------------
+create table if not exists public.court_occupancy_snapshots (
+  id             bigint generated always as identity primary key,
+  court_id       uuid not null references public.courts (id) on delete cascade,
+  captured_at    timestamptz not null default now(),
+  day_of_week    smallint not null check (day_of_week between 0 and 6),
+  hour_of_day    smallint not null check (hour_of_day between 0 and 23),
+  teams_waiting  integer not null,
+  has_match      boolean not null,
+  level          public.occupancy_level not null
+);
+
+comment on table public.court_occupancy_snapshots is
+  'Amostras periódicas da fila, usadas para o movimento típico de cada quadra.';
+
+create index if not exists court_occupancy_snapshots_court_idx
+  on public.court_occupancy_snapshots (court_id, day_of_week, hour_of_day);
+
+create index if not exists court_occupancy_snapshots_captured_idx
+  on public.court_occupancy_snapshots (captured_at);
+
+-- Chamada pelo cron (run_maintenance).
+create or replace function public.capture_occupancy_snapshots()
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_count integer;
+begin
+  insert into public.court_occupancy_snapshots
+    (court_id, day_of_week, hour_of_day, teams_waiting, has_match, level)
+  select
+    c.id,
+    extract(dow  from now())::smallint,
+    extract(hour from now())::smallint,
+    q.teams_waiting,
+    q.has_match,
+    public.occupancy_of(q.teams_waiting, q.has_match, c.busy_threshold, c.full_threshold)
+  from public.courts c
+  cross join lateral (
+    select
+      count(*) filter (where e.status in ('waiting', 'ready'))::integer as teams_waiting,
+      count(*) filter (where e.status = 'playing') > 0                  as has_match
+    from public.queue_entries e
+    where e.court_id = c.id
+  ) q
+  where c.is_active;
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Mapa de calor: ocupação atual de todas as quadras de uma região
+--
+-- p_latitude/p_longitude/p_radius_meters são opcionais: sem eles,
+-- devolve todas as quadras ativas (a web costuma abrir sem GPS).
+-- ---------------------------------------------------------------------
+create or replace function public.courts_heatmap(
+  p_latitude      double precision default null,
+  p_longitude     double precision default null,
+  p_radius_meters double precision default null,
+  p_limit         integer default 200
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    jsonb_agg(jsonb_build_object(
+      'court_id',        s.id,
+      'slug',            s.slug,
+      'name',            s.name,
+      'latitude',        s.latitude,
+      'longitude',       s.longitude,
+      'status',          s.status,
+      'occupancy',       s.level,
+      'teams_waiting',   s.teams_waiting,
+      'has_match',       s.has_match,
+      'estimated_wait_minutes', s.teams_waiting * s.average_match_minutes,
+      'rating_avg',      s.rating_avg,
+      'rating_count',    s.rating_count,
+      'photo_url',       s.photo_url,
+      'cover_photo_path', s.cover_photo_path,
+      'distance_meters', s.distance_meters
+    ) order by coalesce(s.distance_meters, 0), s.name),
+    '[]'::jsonb
+  )
+  from (
+    select
+      c.id, c.slug, c.name, c.latitude, c.longitude, c.status,
+      c.average_match_minutes, c.rating_avg, c.rating_count, c.photo_url,
+      c.cover_photo_path,
+      q.teams_waiting,
+      q.has_match,
+      public.occupancy_of(q.teams_waiting, q.has_match, c.busy_threshold, c.full_threshold) as level,
+      case
+        when p_latitude is null or p_longitude is null then null
+        else public.haversine_meters(p_latitude, p_longitude, c.latitude, c.longitude)
+      end as distance_meters
+    from public.courts c
+    cross join lateral (
+      select
+        count(*) filter (where e.status in ('waiting', 'ready'))::integer as teams_waiting,
+        count(*) filter (where e.status = 'playing') > 0                  as has_match
+      from public.queue_entries e
+      where e.court_id = c.id
+    ) q
+    where c.is_active
+      and (
+        p_latitude is null or p_longitude is null or p_radius_meters is null
+        or public.haversine_meters(p_latitude, p_longitude, c.latitude, c.longitude) <= p_radius_meters
+      )
+    limit least(greatest(coalesce(p_limit, 200), 1), 500)
+  ) s;
+$$;
+
+comment on function public.courts_heatmap(double precision, double precision, double precision, integer) is
+  'Ocupação atual (empty/low/busy/full) de cada quadra, opcionalmente filtrada por raio.';
+
+-- ---------------------------------------------------------------------
+-- Movimento típico de uma quadra, por dia da semana e hora
+-- ---------------------------------------------------------------------
+create or replace function public.court_occupancy_pattern(
+  p_court_id uuid,
+  p_days     integer default 28
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'court_id', p_court_id,
+    'window_days', p_days,
+    'samples', (
+      select count(*)::integer
+      from public.court_occupancy_snapshots s
+      where s.court_id = p_court_id
+        and s.captured_at >= now() - make_interval(days => greatest(coalesce(p_days, 28), 1))
+    ),
+    'pattern', (
+      select coalesce(
+        jsonb_agg(jsonb_build_object(
+          'day_of_week',        a.day_of_week,
+          'hour_of_day',        a.hour_of_day,
+          'avg_teams_waiting',  a.avg_teams,
+          'samples',            a.samples,
+          'typical_occupancy',  a.typical_level
+        ) order by a.day_of_week, a.hour_of_day),
+        '[]'::jsonb
+      )
+      from (
+        select
+          s.day_of_week,
+          s.hour_of_day,
+          round(avg(s.teams_waiting)::numeric, 2) as avg_teams,
+          count(*)::integer                       as samples,
+          public.occupancy_of(
+            round(avg(s.teams_waiting))::integer,
+            bool_or(s.has_match),
+            (select c.busy_threshold from public.courts c where c.id = p_court_id),
+            (select c.full_threshold from public.courts c where c.id = p_court_id)
+          ) as typical_level
+        from public.court_occupancy_snapshots s
+        where s.court_id = p_court_id
+          and s.captured_at >= now() - make_interval(days => greatest(coalesce(p_days, 28), 1))
+        group by s.day_of_week, s.hour_of_day
+      ) a
+    )
+  );
+$$;
+
+-- ---------------------------------------------------------------------
+-- Manutenção: captura snapshots e descarta os antigos
+-- ---------------------------------------------------------------------
+create or replace function public.run_maintenance()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_expired   integer;
+  v_purged    integer;
+  v_snapshots integer;
+begin
+  v_expired   := public.expire_stale_queue_entries();
+  v_purged    := public.purge_expired_scan_tokens();
+  v_snapshots := public.capture_occupancy_snapshots();
+
+  delete from public.notification_outbox
+  where status in ('sent', 'failed') and created_at < now() - interval '30 days';
+
+  -- 90 dias de snapshots bastam para o padrão semanal.
+  delete from public.court_occupancy_snapshots
+  where captured_at < now() - interval '90 days';
+
+  return jsonb_build_object(
+    'expired_entries',    v_expired,
+    'purged_scan_tokens', v_purged,
+    'occupancy_snapshots', v_snapshots,
+    'ran_at', now()
+  );
+end;
+$$;
+
+revoke all on function public.run_maintenance()               from public, anon, authenticated;
+revoke all on function public.capture_occupancy_snapshots()   from public, anon, authenticated;
+
+alter table public.court_occupancy_snapshots enable row level security;
+
+drop policy if exists "snapshots: leitura pública" on public.court_occupancy_snapshots;
+create policy "snapshots: leitura pública"
+  on public.court_occupancy_snapshots for select
+  to anon, authenticated
+  using (true);
+
+revoke all on public.court_occupancy_snapshots from anon, authenticated;
+grant select on public.court_occupancy_snapshots to anon, authenticated;
+
+grant execute on function public.occupancy_of(integer, boolean, integer, integer) to anon, authenticated;
+grant execute on function public.courts_heatmap(double precision, double precision, double precision, integer)
+  to anon, authenticated;
+grant execute on function public.court_occupancy_pattern(uuid, integer) to anon, authenticated;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008120400_web_push.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 2
+-- 14. Web Push para a versão web
+--
+-- A Expo Push API cobre o app da Play Store (FCM) e da App Store
+-- (APNs), mas não entrega em navegador. O PWA usa o Web Push padrão
+-- (RFC 8291 + VAPID), que tem outro formato de credencial: endpoint do
+-- push service do navegador + duas chaves por subscription.
+-- =====================================================================
+
+create table if not exists public.web_push_subscriptions (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users (id) on delete cascade,
+  endpoint      text not null unique,
+  p256dh        text not null,
+  auth          text not null,
+  user_agent    text,
+  is_active     boolean not null default true,
+  last_seen_at  timestamptz not null default now(),
+  failure_count integer not null default 0,
+  created_at    timestamptz not null default now(),
+
+  constraint web_push_endpoint_https check (endpoint ~ '^https://'),
+  constraint web_push_keys_length    check (char_length(p256dh) between 1 and 255
+                                        and char_length(auth)   between 1 and 255)
+);
+
+comment on table public.web_push_subscriptions is
+  'Subscriptions de Web Push (navegador). O equivalente de push_tokens para a versão web.';
+comment on column public.web_push_subscriptions.endpoint is
+  'URL do push service do navegador (FCM, Mozilla, WNS). Identifica a subscription.';
+
+create index if not exists web_push_user_idx
+  on public.web_push_subscriptions (user_id) where is_active;
+
+-- ---------------------------------------------------------------------
+-- O usuário tem algum canal de push? (app ou navegador)
+-- ---------------------------------------------------------------------
+create or replace function public.has_push_channel(p_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.push_tokens t
+    where t.user_id = p_user_id and t.is_active
+  ) or exists (
+    select 1 from public.web_push_subscriptions w
+    where w.user_id = p_user_id and w.is_active
+  );
+$$;
+
+-- ---------------------------------------------------------------------
+-- RLS
+-- ---------------------------------------------------------------------
+alter table public.web_push_subscriptions enable row level security;
+
+drop policy if exists "web push: dono lê" on public.web_push_subscriptions;
+create policy "web push: dono lê"
+  on public.web_push_subscriptions for select
+  to authenticated
+  using (user_id = auth.uid());
+
+drop policy if exists "web push: dono remove" on public.web_push_subscriptions;
+create policy "web push: dono remove"
+  on public.web_push_subscriptions for delete
+  to authenticated
+  using (user_id = auth.uid());
+
+revoke all on public.web_push_subscriptions from anon, authenticated;
+grant select, delete on public.web_push_subscriptions to authenticated;
+
+-- Só o backend (service_role) usa: para o cliente, saber se OUTRO
+-- usuário tem push registrado não serve a nada e vaza informação.
+revoke all on function public.has_push_channel(uuid) from public, anon, authenticated;

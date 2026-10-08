@@ -1,21 +1,31 @@
 # NEQST — Backend
 
-Backend do **App de Fila para Quadras de Tênis**, implementando a
-[Sprint 1](docs/sprint1.md): criar conta, escanear o QR Code da quadra,
-validar proximidade e entrar na fila (individual ou dupla) em tempo real.
+Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
+**app da Play Store** com a mesma API:
+
+- [Sprint 1](docs/sprint1.md) — criar conta, escanear o QR Code da
+  quadra, validar proximidade e entrar na fila (individual ou dupla) em
+  tempo real.
+- [Sprint 2](docs/sprint2.md) — histórico do usuário, avaliação da
+  quadra, upload de fotos com moderação e mapa de calor cheio/vazio.
+
+O que difere entre web e app (push, QR Code, CORS, login) está em
+[docs/plataformas.md](docs/plataformas.md).
 
 Stack: **Supabase** (Postgres + Auth + Realtime + Edge Functions em Deno),
 conforme as decisões técnicas recomendadas no documento da sprint.
 
 ```
-┌──────────────┐   HTTPS   ┌─────────────────┐   RPC/SQL   ┌────────────┐
-│ App Expo     │──────────▶│ Edge Functions  │────────────▶│ Postgres   │
-│ (RN)         │           │ (Deno)          │             │ + RLS      │
-│              │◀──────────│ scan / join /   │             │ + Realtime │
-└──────────────┘ WebSocket │ leave / push    │             └────────────┘
-       ▲         (Realtime)└─────────────────┘                    │
-       │                            │                             │
-       └──── push (FCM/APNs) ◀──────┴── Expo Push API ◀── outbox ──┘
+┌──────────────┐           ┌─────────────────┐   RPC/SQL   ┌────────────┐
+│ App Expo     │   HTTPS   │ Edge Functions  │────────────▶│ Postgres   │
+│ (Play Store) │──────────▶│ (Deno)          │             │ + RLS      │
+├──────────────┤           │ scan / join /   │             │ + Realtime │
+│ Web / PWA    │◀──────────│ leave / fotos   │             │ + Storage  │
+└──────────────┘ WebSocket │ push / QR       │             └────────────┘
+    ▲      ▲    (Realtime) └─────────────────┘                   │
+    │      │                        │                            │
+    │      └── Web Push (VAPID) ◀───┤                            │
+    └───────── Expo Push (FCM/APNs) ┴──────── outbox ◀───────────┘
 ```
 
 ## Setup local (meta do DoD: ≤ 15 minutos)
@@ -38,8 +48,8 @@ supabase db reset            # aplica migrations + seed
 supabase functions serve --env-file .env
 
 # 5. Testes
-scripts/test-sql.sh                        # migrations + fluxo da fila
-deno test supabase/functions/_shared/      # geolocalização, QR, push
+scripts/test-sql.sh                             # migrations + fila + Sprint 2
+deno test --allow-env supabase/functions/_shared/  # geo, QR, web push, CORS
 ```
 
 ## Aplicar o schema num projeto Supabase existente
@@ -81,9 +91,10 @@ Passo a passo completo (SSO Google/Apple, pg_cron, QR Codes impressos):
 | `supabase/functions/` | Edge Functions em Deno (API HTTP) |
 | `supabase/functions/_shared/` | Haversine, assinatura de QR, scan tokens, Expo Push, tipos |
 | `supabase/seed.sql` | Quadras de exemplo para dev/staging |
-| `tests/local/` | Testes funcionais em SQL (fluxo completo da fila) |
-| `scripts/` | Runner de testes, gerador de QR Codes, build do full_setup |
-| `docs/` | Arquitetura, API, banco, deploy, QR Codes |
+| `tests/local/` | Testes funcionais em SQL (fila, ordem, Sprint 2) |
+| `scripts/` | Runner de testes, geradores de QR e de chaves VAPID, build do full_setup |
+| `docs/` | Arquitetura, API, banco, deploy, QR Codes, plataformas |
+| `docs/app-links/` | Modelos de `assetlinks.json` e `apple-app-site-association` |
 
 ## API
 
@@ -97,6 +108,8 @@ Passo a passo completo (SSO Google/Apple, pg_cron, QR Codes impressos):
 | `/functions/v1/call-next` | POST | operação da quadra | US-03 |
 | `/functions/v1/admin-court-qr` | GET / POST | admin | US-02 |
 | `/functions/v1/dispatch-notifications` | POST | cron | US-03 |
+| `/functions/v1/register-web-push` | GET / POST / DELETE | jogador (web) | Sprint 2 |
+| `/functions/v1/court-photo` | GET / POST | jogador | Sprint 2 |
 
 Contratos, exemplos de request/response e códigos de erro:
 [`docs/api.md`](docs/api.md).
@@ -116,17 +129,32 @@ sem passar pelas Edge Functions — ver [`docs/api.md`](docs/api.md#rpc-direto).
   ordem, unicidade e presença não dependem do cliente.
 - **Tempo real sem polling.** O app assina `queue_entries` via Realtime
   (WebSocket). `queue-status` existe como fallback para sinal fraco.
-- **Push confiável.** Notificações vão para um *outbox* transacional; um
-  worker (`dispatch-notifications`) entrega via Expo Push com backoff e
-  desativa tokens mortos.
+- **Push confiável nos dois mundos.** Notificações vão para um *outbox*
+  transacional; um worker (`dispatch-notifications`) entrega via Expo Push
+  (app) **e** Web Push/VAPID (navegador), com backoff e desativação de
+  canais mortos. A Expo Push API não entrega em navegador — sem o segundo
+  canal, o "Prepare-se!" nunca chegaria para quem usa o site.
+- **QR Code que a câmera do celular abre.** O código impresso é um App
+  Link `https://<app>/q/<courtId>?v=1&s=<assinatura>`: abre o app da Play
+  Store se instalado, senão o site. Um QR com esquema `neqst:` não abre
+  nada na câmera nativa.
+- **Fotos moderadas.** Upload direto para o Storage por URL assinada
+  (sem passar pela função, o que importa no 3G), bucket privado e
+  aprovação obrigatória antes de aparecer no app.
 
 ## Escopo
 
-Implementado: US-01 (perfis/auth), US-02 (QR + geolocalização), US-03
+**Sprint 1:** US-01 (perfis/auth), US-02 (QR + geolocalização), US-03
 (fila individual e dupla, tempo real, push), US-04 (dados da quadra).
 US-05 é infra de app (EAS Build/TestFlight), fora do backend — o que cabe
 aqui (CI, ambientes, `.env`, README) está em `.github/workflows/ci.yml` e
 [`docs/deploy.md`](docs/deploy.md).
 
-Fora do escopo da Sprint 1, como definido no documento: histórico do
-usuário, avaliação de quadra, fotos e mapa de calor.
+**Sprint 2:** histórico do usuário, avaliação da quadra, upload de fotos
+e mapa de calor — mais o que a publicação na web exige do backend
+([`docs/plataformas.md`](docs/plataformas.md)).
+
+Sugestões que ficaram registradas para depois, em
+[`docs/sprint2.md`](docs/sprint2.md#o-que-não-entrou): rate limiting no
+`scan-court`, thumbnails das fotos e push pedindo avaliação ao fim da
+partida.

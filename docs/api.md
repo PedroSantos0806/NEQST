@@ -183,12 +183,115 @@ Ver [`docs/qr-codes.md`](qr-codes.md).
 
 ---
 
+## POST / DELETE / GET /register-web-push — push na web (Sprint 2)
+
+`GET` (sem login) devolve a chave pública VAPID que o front usa em
+`pushManager.subscribe({ applicationServerKey })`:
+
+```json
+{ "publicKey": "BL3f..." }
+```
+
+`POST` registra a subscription do navegador — mande o
+`PushSubscription.toJSON()` como veio:
+
+```json
+{ "endpoint": "https://fcm.googleapis.com/fcm/send/abc", "keys": { "p256dh": "BI6D...", "auth": "624j..." } }
+```
+
+`DELETE` com `{ "endpoint": "..." }` desativa (logout, permissão revogada).
+
+A Expo Push API não entrega em navegador — ver
+[`plataformas.md`](plataformas.md#1-push-notifications).
+
+---
+
+## Fotos da quadra (Sprint 2)
+
+### POST /court-photo — pedir URL de upload
+
+```json
+{ "courtId": "7c9e...", "contentType": "image/jpeg", "caption": "Quadra 2 ao anoitecer" }
+```
+
+**201**
+
+```json
+{
+  "photoId": "e1f2...",
+  "courtId": "7c9e...",
+  "storagePath": "7c9e.../a1b2.jpg",
+  "uploadUrl": "https://...supabase.co/storage/v1/object/upload/sign/court-photos/...",
+  "token": "eyJ...",
+  "contentType": "image/jpeg",
+  "expiresInSeconds": 300
+}
+```
+
+O arquivo vai **direto** para `uploadUrl` (`PUT`, com o header
+`Content-Type` igual ao declarado) — não passa pela função. Depois:
+
+### POST /court-photo?action=confirm
+
+```json
+{ "photoId": "e1f2...", "sizeBytes": 184320, "width": 1080, "height": 1440 }
+```
+
+**200** — a foto entra na fila de moderação e só aparece no app depois de
+aprovada.
+
+| Código | HTTP | Quando |
+|---|---|---|
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | Fora de JPEG/PNG/WebP |
+| `UPLOAD_NOT_FOUND` | 409 | `confirm` sem o arquivo ter chegado ao Storage |
+| `PHOTO_NOT_FOUND` / `FORBIDDEN` | 404 / 403 | Foto inexistente ou de outro usuário |
+
+Cota: 5 fotos pendentes por jogador por quadra (`NQ012`).
+
+### GET /court-photo?courtIds=a,b,c — capas em lote
+
+Para a lista de quadras e o mapa de calor, que devolvem
+`cover_photo_path` (um caminho no bucket privado, não uma URL):
+
+```json
+{ "covers": { "7c9e...": "https://...signed...", "8d0f...": null }, "expiresInSeconds": 3600 }
+```
+
+### GET /court-photo?courtId=&lt;uuid&gt;
+
+Fotos aprovadas com URL assinada de leitura (1h):
+
+```json
+{
+  "courtId": "7c9e...",
+  "photos": [
+    { "photo_id": "e1f2...", "url": "https://...", "caption": "...", "is_primary": true, "author": { "username": "ana" } }
+  ],
+  "expiresInSeconds": 3600
+}
+```
+
+---
+
 ## POST /dispatch-notifications — worker de push (cron)
 
 Header `x-cron-secret: <CRON_SECRET>`. Sem JWT de usuário.
 Processa até 200 notificações pendentes por chamada.
 
-**200** `{ "processed": 12, "sent": 11, "failed": 1, "deactivatedTokens": 1 }`
+**200**
+
+```json
+{
+  "processed": 12,
+  "sent": 11,
+  "failed": 1,
+  "channels": { "expo_messages": 9, "web_push_subscriptions": 4, "vapid_configured": true },
+  "deactivated": { "push_tokens": 1, "web_push": 0 }
+}
+```
+
+Entrega nos dois canais (Expo para o app, Web Push para o navegador). Uma
+notificação conta como enviada se qualquer canal aceitou.
 
 ---
 
@@ -211,6 +314,40 @@ const { data } = await supabase.rpc("leave_queue", { p_entry_id: entryId });
 `join_queue` também é RPC (`p_scan_token`, `p_mode`, `p_partner`), mas o
 `scanToken` só existe depois de `scan-court` — a Edge Function continua
 sendo o caminho natural para entrar na fila.
+
+### RPCs da Sprint 2
+
+```ts
+// Histórico e perfil
+await supabase.rpc("my_profile_summary");
+await supabase.rpc("my_match_history", { p_limit: 20, p_before: cursor });
+await supabase.rpc("my_visited_courts");
+
+// Avaliações
+await supabase.rpc("rate_court", { p_court_id: id, p_rating: 4, p_comment: "Saibro ótimo" });
+await supabase.rpc("court_reviews_page", { p_court_id: id });
+await supabase.rpc("can_review_court", { p_court_id: id });
+await supabase.rpc("delete_my_court_review", { p_court_id: id });
+
+// Mapa de calor — lat/lng opcionais (a web abre antes de ter GPS)
+await supabase.rpc("courts_heatmap", {
+  p_latitude: coords?.latitude ?? null,
+  p_longitude: coords?.longitude ?? null,
+  p_radius_meters: 5000,
+});
+await supabase.rpc("court_occupancy_pattern", { p_court_id: id, p_days: 28 });
+
+// Fotos
+await supabase.rpc("court_photos_page", { p_court_id: id });
+
+// Operação
+await supabase.rpc("pending_court_photos");
+await supabase.rpc("moderate_court_photo", { p_photo_id: id, p_approve: true });
+await supabase.rpc("set_primary_court_photo", { p_photo_id: id });
+```
+
+`courts_heatmap` devolve `occupancy` em `empty` / `low` / `busy` / `full`
+— é o indicador cheio/vazio da Sprint 2.
 
 ### Tempo real (US-03)
 
@@ -253,3 +390,7 @@ tabela acima.
 | `NQ007` | Time não encontrado |
 | `NQ008` | Sem permissão |
 | `NQ009` | Transição de estado inválida |
+| `NQ010` | Avaliar quadra onde ainda não jogou |
+| `NQ011` | Nota fora da faixa de 1 a 5 |
+| `NQ012` | Cota de fotos pendentes atingida |
+| `NQ013` | Foto não encontrada |
