@@ -29,6 +29,31 @@ jobs:
       - name: Testes unitários
         run: deno test --allow-env supabase/functions/_shared/
 
+  web:
+    name: App web (build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Instalar dependências
+        run: npm ci --prefix web
+
+      - name: Type-check
+        run: npm run typecheck --prefix web
+
+      # O mesmo comando que a Vercel roda: se quebrar aqui, quebra lá.
+      - name: Build
+        env:
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: ci-placeholder
+        run: npm run build --prefix web
+
   database:
     name: Banco (migrations + fluxo da fila)
     runs-on: ubuntu-latest
