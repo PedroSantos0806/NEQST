@@ -16,12 +16,21 @@ resolve isso apontando o build para `web/`.
 
 | Variável | Valor | Obrigatória |
 |---|---|---|
-| `VITE_SUPABASE_URL` | `https://<project-ref>.supabase.co` | sim |
-| `VITE_SUPABASE_ANON_KEY` | a chave **anon public** | sim |
-| `VITE_VAPID_PUBLIC_KEY` | chave pública do Web Push | não |
+| `VITE_SUPABASE_URL` (ou `SUPABASE_URL`) | `https://<project-ref>.supabase.co` | sim |
+| `VITE_SUPABASE_ANON_KEY` (ou `SUPABASE_ANON_KEY`) | a chave **anon public** | sim |
+| `VITE_VAPID_PUBLIC_KEY` (ou `VAPID_PUBLIC_KEY`) | chave pública do Web Push | não |
+
+O Vite só entrega ao navegador o que começa com `VITE_`. Como na Vercel
+elas acabaram nomeadas sem o prefixo, o
+[`web/vite.config.ts`](../web/vite.config.ts) injeta as três
+explicitamente aceitando os dois nomes — é uma lista fechada de três, e
+não um prefixo genérico, justamente para que uma eventual
+`SUPABASE_SERVICE_ROLE_KEY` no projeto jamais entre no bundle.
 
 Sem as duas primeiras o app abre numa tela explicando o que falta, em
-vez de uma página branca.
+vez de uma página branca: o `main.tsx` confere a configuração **antes**
+de carregar qualquer coisa que toque o Supabase, e um handler global de
+erro pinta uma mensagem legível se algo quebrar depois disso.
 
 > **Nunca** coloque a `service_role` aqui. Ela ignora o RLS e qualquer
 > pessoa consegue lê-la no bundle que o navegador baixa.
@@ -84,6 +93,11 @@ nessa tela — a URL inteira já é o payload assinado; o app só pede a
 localização e valida. Quem não está logado é mandado para `/entrar` e
 volta para o QR depois do login.
 
+Dentro de um parque (`/parque/:parkId`, `/quadra/:courtId`, `/perfil`)
+a barra inferior do protótipo fica visível: Quadras · Placar · QR/NFC ·
+Perfil. O botão central abre a leitura; o "Placar" aponta para a última
+quadra aberta, lembrada na sessão.
+
 ## O que o app faz com o backend
 
 ```
@@ -125,6 +139,20 @@ App Link `https://<dominio>/q/<courtId>`. Basta publicar
 `/.well-known/assetlinks.json` (modelo em
 [`docs/app-links/`](app-links/README.md)) **antes** do build da loja, e
 o Android passa a abrir o app em vez do site. Nada muda no backend.
+
+## A tipografia da marca
+
+O protótipo escreve "Neqst" na **Chancery Cursive - DGL**, que é
+`© 1998 Digital Graphic Labs, All Rights Reserved` — sem licença de
+redistribuição, ela não pode ser publicada junto com o site. No lugar
+dela usamos a **Italianno** (Google Fonts, licença aberta), que foi
+escolhida comparando as duas lado a lado: é a parente livre que acerta
+o traço do N e o rabo do q.
+
+Se o cliente tiver a licença, é um arquivo: coloque o TTF em
+`web/public/fonts/chancery-cursive.ttf`. O `@font-face` em
+`src/index.css` já aponta para lá, e a assinatura fica idêntica à do
+protótipo sem mexer em código.
 
 ## Limitações conhecidas
 

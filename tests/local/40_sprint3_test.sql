@@ -560,6 +560,16 @@ begin
   end;
 end $$;
 
+-- O resumo do perfil devolve a raquete, senão a tela abre com a padrão
+do $$
+declare v jsonb;
+begin
+  v := public.my_profile_summary() -> 'profile';
+  assert v ->> 'racket_frame_color' = '#B13F16', format('aro no resumo: %s', v);
+  assert v ->> 'racket_grip_color'  = '#74B69D', format('grip no resumo: %s', v);
+  assert (v ->> 'avatar_tone')::int = 2, format('tom no resumo: %s', v);
+end $$;
+
 -- A raquete nova aparece na pilha da fila
 do $$
 declare v jsonb;
