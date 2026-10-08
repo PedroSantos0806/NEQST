@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { parksOverview } from "../lib/api";
 import { getPosition } from "../lib/geo";
 import { Badge, ErrorState, Loading } from "../components/ui";
-import { distance, firstName, greeting, SURFACE_COLOR, surfaceTextColor } from "../lib/format";
+import { ChevronRight, Pin, SurfaceIcon } from "../components/icons";
+import { distance, firstName, greeting, initialsOf, SURFACE_COLOR, surfaceTextColor } from "../lib/format";
+import { toneStyle } from "../lib/me";
+import { useMe } from "../hooks/useMe";
 import type { ParkCard } from "../lib/types";
-import { useAuth } from "../hooks/useAuth";
 
 export function Parks() {
-  const { session } = useAuth();
+  const navigate = useNavigate();
+  const profile = useMe();
   const [parks, setParks] = useState<ParkCard[] | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
@@ -28,8 +31,8 @@ export function Parks() {
     void load();
   }, []);
 
-  const name = (session?.user.user_metadata?.full_name as string | undefined) ??
-    session?.user.email?.split("@")[0];
+  const name = profile?.profile?.full_name ?? profile?.profile?.username;
+  const avatar = toneStyle(profile?.profile?.avatar_tone);
 
   if (error) {
     return <ErrorState title="Não conseguimos carregar os parques" detail={error.message} onRetry={load} />;
@@ -51,9 +54,15 @@ export function Parks() {
             }}
           />
         </div>
-        <Link to="/perfil" style={{ fontSize: 12, fontWeight: 700, color: "var(--green)" }}>
-          Meu perfil
-        </Link>
+        <button
+          type="button"
+          className="press"
+          onClick={() => navigate("/perfil")}
+          aria-label="Abrir perfil"
+          style={{ width: 44, height: 44, borderRadius: 10, border: "2px solid var(--green)", fontSize: 15, fontWeight: 700, ...avatar }}
+        >
+          {initialsOf(name)}
+        </button>
       </header>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -152,6 +161,9 @@ function ParkRow({ park }: { park: ParkCard }) {
                 <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
                 <circle cx="12" cy="13" r="3.5" />
               </svg>
+              <span style={{ position: "relative", fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase" }}>
+                [Foto — {park.photo_alt ?? "quadra"}]
+              </span>
             </span>
           )}
 
@@ -162,11 +174,6 @@ function ParkRow({ park }: { park: ParkCard }) {
           </Badge>
         </span>
 
-        {park.is_mine && (
-          <span style={{ position: "absolute", right: 10, top: 10 }}>
-            <Badge background="var(--ocre)" color="var(--ink)">Você está aqui</Badge>
-          </span>
-        )}
       </span>
 
       <span style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", padding: "12px 14px 14px" }}>
@@ -174,16 +181,11 @@ function ParkRow({ park }: { park: ParkCard }) {
           <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span className="bb" style={{ fontSize: 30, lineHeight: 0.95 }}>{park.name}</span>
             <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: "var(--green)" }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 21s-7-6.5-7-12a7 7 0 0 1 14 0c0 5.5-7 12-7 12z" />
-                <circle cx="12" cy="9" r="2.5" />
-              </svg>
+              <Pin size={14} />
               {park.district ?? "—"}{far ? ` · ${far}` : ""}
             </span>
           </span>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--green)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M9 6l6 6-6 6" />
-          </svg>
+          <span style={{ color: "var(--green)", display: "flex" }}><ChevronRight size={22} /></span>
         </span>
 
         <span
@@ -200,7 +202,7 @@ function ParkRow({ park }: { park: ParkCard }) {
           <Stat value={park.queue_count} label="Na fila" />
         </span>
 
-        {park.surfaces.length > 0 && (
+        {(park.surfaces.length > 0 || park.is_mine) && (
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {park.surfaces.map((surface) => (
               <Badge
@@ -208,9 +210,13 @@ function ParkRow({ park }: { park: ParkCard }) {
                 background={SURFACE_COLOR[surface.surface] ?? "var(--green)"}
                 color={surfaceTextColor(surface.surface)}
               >
+                <SurfaceIcon surface={surface.surface} size={11} />
                 {surface.label}
               </Badge>
             ))}
+            {park.is_mine && (
+              <Badge background="var(--ocre)" color="var(--ink)">Você está na fila aqui</Badge>
+            )}
           </span>
         )}
       </span>

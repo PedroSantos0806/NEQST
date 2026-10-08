@@ -15,20 +15,36 @@ export function useLiveCourt(courtId: string | undefined) {
   const [data, setData] = useState<CourtScreen | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
-  const pending = useRef(false);
+  const pending = useRef<Promise<CourtScreen | null> | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (!courtId || pending.current) return;
-    pending.current = true;
-    try {
-      setData(await courtScreen(courtId));
-      setError(null);
-    } catch (cause) {
-      setError(cause as Error);
-    } finally {
-      pending.current = false;
-      setLoading(false);
-    }
+  /**
+   * Devolve o estado recém-lido: quem acabou de entrar na fila precisa
+   * dele na hora para mostrar a tela de sucesso com a posição certa.
+   *
+   * Chamadas simultâneas (Realtime + ação do usuário) compartilham a
+   * mesma ida ao servidor em vez de uma delas voltar de mãos vazias.
+   */
+  const refresh = useCallback((): Promise<CourtScreen | null> => {
+    if (!courtId) return Promise.resolve(null);
+    if (pending.current) return pending.current;
+
+    const run = courtScreen(courtId)
+      .then((fresh) => {
+        setData(fresh);
+        setError(null);
+        return fresh;
+      })
+      .catch((cause: Error) => {
+        setError(cause);
+        return null;
+      })
+      .finally(() => {
+        pending.current = null;
+        setLoading(false);
+      });
+
+    pending.current = run;
+    return run;
   }, [courtId]);
 
   useEffect(() => {

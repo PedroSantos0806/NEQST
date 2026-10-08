@@ -5,7 +5,7 @@
   "outputDirectory": "web/dist",
   "framework": null,
   "rewrites": [
-    { "source": "/((?!assets/|icons/|manifest.webmanifest|sw.js|.well-known/).*)", "destination": "/index.html" }
+    { "source": "/((?!assets/|icons/|fonts/|manifest.webmanifest|sw.js|.well-known/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {

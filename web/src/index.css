@@ -52,6 +52,14 @@ body {
   overflow-x: hidden;
 }
 
+/*
+ * Folga para a barra inferior fixa (84px + área segura do iPhone). Vive
+ * no body porque a barra é irmã da tela, não filha dela.
+ */
+body.has-nav #root {
+  padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+}
+
 button,
 input,
 select,
@@ -85,9 +93,28 @@ a {
   font-weight: 400;
 }
 
+/*
+ * A assinatura "Neqst".
+ *
+ * O protótipo usa a Chancery Cursive - DGL, que é © 1998 Digital
+ * Graphic Labs, All Rights Reserved — sem licença de redistribuição,
+ * ela não pode ser publicada junto com o site. Quem tiver a licença é
+ * só largar o arquivo em public/fonts/chancery-cursive.ttf: o
+ * @font-face abaixo já aponta para lá e o desenho fica idêntico ao do
+ * protótipo. Enquanto isso usamos a Italianno, que é a parente livre
+ * mais próxima — comparada lado a lado com a original, é a que acerta
+ * o traço do N e o rabo do q.
+ */
+@font-face {
+  font-family: "Chancery Cursive";
+  src: url("/fonts/chancery-cursive.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 .script {
-  font-family: Georgia, "Times New Roman", serif;
-  font-style: italic;
+  font-family: "Chancery Cursive", Italianno, Georgia, "Times New Roman", serif;
   font-weight: 400;
   letter-spacing: 0;
 }

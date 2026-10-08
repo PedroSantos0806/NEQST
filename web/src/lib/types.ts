@@ -168,6 +168,9 @@ export interface ProfileSummary {
     avatar_url: string | null;
     role: string;
     created_at: string;
+    avatar_tone: number;
+    racket_frame_color: string;
+    racket_grip_color: string;
   } | null;
   stats: {
     matches_played: number;
