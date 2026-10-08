@@ -92,6 +92,13 @@ verify_jwt = false
 [functions.court-photo]
 verify_jwt = false
 
+[functions.check-in]
+verify_jwt = true
+
+# GET do placar é público; POST do resultado valida o JWT na função.
+[functions.match]
+verify_jwt = false
+
 # Chamada por cron com header x-cron-secret, sem JWT de usuário.
 [functions.dispatch-notifications]
 verify_jwt = false

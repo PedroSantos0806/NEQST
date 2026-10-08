@@ -7,15 +7,21 @@ no SQL Editor, fica em `db/full_setup.sql`.
 ## Diagrama
 
 ```
-auth.users ──1:1── profiles
-                      │
-                      ├──< queue_entry_members >── queue_entries >── courts
-                      │                                   │            │
-                      ├──< push_tokens                    │            ├──< court_reviews
-                      ├──< web_push_subscriptions         │            ├──< court_photos
-                      └──< notification_outbox <──────────┘            ├──< court_occupancy_snapshots
-                                                                       │
-                                            scan_tokens ───────────────┘
+                                             parks
+                                               │
+auth.users ──1:1── profiles                    ▼
+                      │                      courts ──< court_reviews
+                      ├──< queue_entry_members      ──< court_photos
+                      │         │                   ──< court_occupancy_snapshots
+                      │         ▼                        │
+                      │    queue_entries ───────────────┘
+                      │         │   │
+                      │         │   └──< matches (lado A / lado B)
+                      ├──< push_tokens
+                      ├──< web_push_subscriptions
+                      └──< notification_outbox
+
+                 scan_tokens ──▶ courts   (prova de presença, QR ou NFC)
 ```
 
 ## Tabelas
@@ -29,14 +35,25 @@ e é o identificador usado para convidar o parceiro de dupla.
 `role` (`player` / `staff` / `admin`) governa as permissões: só `staff` e
 `admin` operam a quadra; só `admin` gera e rotaciona QR Codes.
 
-### `courts` (US-02 / US-04)
-Quadra, coordenadas e regras de proximidade:
+### `parks` (Sprint 3)
+Parque ou complexo que abriga as quadras: nome, distrito
+("Vila Mariana · Zona Sul"), foto com texto alternativo e cor de fundo
+para o cartão sem foto. É por aqui que o app começa.
+
+### `courts` (US-02 / US-04 / Sprint 3)
+Quadra de um parque, com número (`court_number` → "Quadra 01", único por
+parque) e superfície (`clay` / `hard` / `grass`). Coordenadas e regras de
+proximidade:
 
 | Coluna | Papel |
 |---|---|
 | `max_distance_meters` | Raio de entrada — padrão 1000 m (US-02) |
 | `gps_tolerance_meters` | Margem extra para GPS impreciso — padrão 200 m |
-| `average_match_minutes` | Base do tempo estimado de espera |
+| `slot_minutes` | **Limite** de uma partida (padrão 40, faixa 20-90) |
+| `average_match_minutes` | Espelha o slot por trigger (compatibilidade) |
+| `call_window_seconds` | Prazo do check-in depois de ser chamado (padrão 300) |
+| `holder_entry_id` | Time que venceu e segue em quadra |
+| `has_qr_code` / `has_nfc_tag` | Quais formas de check-in a quadra oferece |
 | `status` | `available` / `in_game` / `unavailable` |
 | `qr_secret_version` | Permite rotacionar o QR de uma quadra sem afetar as demais |
 
@@ -50,10 +67,12 @@ Um *time* na fila e seus jogadores. Individual = 1 membro, dupla = 2.
 
 Garantias no próprio schema:
 
-- `queue_entries_one_playing_per_court` — no máximo uma partida em
-  andamento por quadra.
-- `queue_entry_members_one_active_per_court` — um jogador não pode estar
-  em dois times ativos da mesma quadra (inclusive como parceiro).
+- `matches_one_live_per_court` — no máximo uma partida em andamento por
+  quadra.
+- `queue_entry_members_one_active_per_player` — um jogador em **uma fila
+  só, em qualquer quadra de qualquer parque** (inclusive como parceiro de
+  dupla). O protótipo recusa a segunda com "Você já está na fila da
+  Quadra 04".
 - `queue_entry_members_team_size` — dupla nunca passa de 2 jogadores.
 - `queue_entries_sync_members` — encerrado o time, seus jogadores voltam
   a poder entrar na fila.
@@ -102,6 +121,25 @@ Os limites de ocupação ficam na quadra (`busy_threshold`,
 `full_threshold`), não no código: 2 times na fila é tranquilo num clube e
 cheio numa quadra pública.
 
+### `matches` (Sprint 3)
+Uma partida: lado A (desafiante, veio da fila) contra lado B (mandante).
+`side_b_entry_id` nulo é o **"Adversário livre"** — a quadra estava vazia
+e o outro lado segue aberto.
+
+`expires_at` nasce de `started_at + slot_minutes`. Chegando lá,
+`advance_expired_queues` encerra sem vencedor e a fila anda. Com
+vencedor, `courts.holder_entry_id` passa a apontar para ele: **quem ganha
+fica**.
+
+Um índice único garante uma partida ao vivo por quadra. O índice da
+Sprint 1 (`queue_entries_one_playing_per_court`) foi removido: ele
+presumia um time só em quadra e impediria os dois lados de jogarem.
+
+### `racket_palette` (Sprint 3)
+As seis cores do protótipo (Ocre, Giz, Ferrugem, Azul névoa, Malva,
+Sálvia). Fica no banco para o app não hardcodar e para a validação
+recusar cor fora do conjunto.
+
 ### `web_push_subscriptions` (Sprint 2)
 O equivalente de `push_tokens` para o navegador: endpoint do push service
 mais as chaves `p256dh` e `auth`. Existe porque a Expo Push API não
@@ -127,6 +165,12 @@ entrega em navegador — ver [`plataformas.md`](plataformas.md).
 | `court_photos_page` | app | Fotos aprovadas (Sprint 2) |
 | `moderate_court_photo` / `set_primary_court_photo` / `pending_court_photos` | staff | Moderação (Sprint 2) |
 | `capture_occupancy_snapshots` | cron | Amostra da ocupação (Sprint 2) |
+| `parks_overview` / `park_screen` / `court_screen` / `my_queue_state` | app | Uma por tela (Sprint 3) |
+| `check_in_and_start` / `join_open_side` | jogador | Liberar o placar e iniciar (Sprint 3) |
+| `report_match_result` | jogador | Quem ganhou — aplica o "quem ganha fica" |
+| `search_partners` / `update_my_profile` | app | Parceiro e raquete (Sprint 3) |
+| `advance_expired_queues` | cron | Slot estourado e chamada não atendida |
+| `court_label` / `initials_of` / `short_name_of` | interno | Rótulos do jeito que o app mostra |
 
 Todas são `SECURITY DEFINER` com `search_path = ''` — cada objeto é
 referenciado pelo nome completo, o que fecha a porta para sequestro de
@@ -148,6 +192,9 @@ RLS ativo em todas as tabelas. O resumo:
 | `court_photos` | leitura das aprovadas | aprovadas + as próprias; remove as próprias |
 | `court_occupancy_snapshots` | leitura | leitura |
 | `web_push_subscriptions` | — | lê e remove apenas as próprias |
+| `parks` | leitura das ativas | leitura; escrita só admin |
+| `matches` | leitura | **somente leitura** (escrita via RPC) |
+| `racket_palette` | leitura | leitura |
 
 `INSERT/UPDATE/DELETE` na fila foram **revogados** de `anon` e
 `authenticated`: só as funções `SECURITY DEFINER` escrevem. Um cliente com
@@ -156,8 +203,9 @@ remover o time de outra pessoa.
 
 ## Realtime
 
-`queue_entries`, `queue_entry_members` e `courts` estão na publicação
-`supabase_realtime` com `replica identity full`. O app filtra por
+`queue_entries`, `queue_entry_members`, `courts` e `matches` estão na
+publicação `supabase_realtime` com `replica identity full`. O placar da
+quadra é ao vivo: assine `matches` filtrando por `court_id`. O app filtra por
 `court_id` — ver [`api.md`](api.md#tempo-real-us-03).
 
 ## Rotinas agendadas

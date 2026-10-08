@@ -14,6 +14,11 @@ export type QueueEntryStatus =
   | "cancelled"
   | "expired";
 export type QueueMemberRole = "owner" | "partner";
+export type CourtSurface = "clay" | "hard" | "grass";
+export type ScanMethod = "qr" | "nfc";
+export type ScanPurpose = "join" | "start";
+export type MatchSide = "a" | "b";
+export type PlayerState = "free" | "queued" | "playing";
 export type NotificationType =
   | "queue_almost_ready"
   | "queue_turn"
@@ -22,6 +27,9 @@ export type NotificationType =
 
 export interface CourtRow {
   id: string;
+  park_id: string;
+  court_number: number;
+  surface: CourtSurface;
   slug: string;
   name: string;
   address: string | null;
@@ -32,7 +40,9 @@ export interface CourtRow {
   longitude: number;
   max_distance_meters: number;
   gps_tolerance_meters: number;
-  average_match_minutes: number;
+  slot_minutes: number;
+  has_qr_code: boolean;
+  has_nfc_tag: boolean;
   qr_secret_version: number;
 }
 

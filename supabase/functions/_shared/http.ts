@@ -135,6 +135,17 @@ const PG_ERROR_MAP: Record<string, { code: string; status: number }> = {
   NQ007: { code: "ENTRY_NOT_FOUND", status: 404 },
   NQ008: { code: "FORBIDDEN", status: 403 },
   NQ009: { code: "INVALID_STATE", status: 409 },
+  NQ010: { code: "NEVER_PLAYED_HERE", status: 403 },
+  NQ011: { code: "INVALID_RATING", status: 400 },
+  NQ012: { code: "PHOTO_QUOTA_REACHED", status: 429 },
+  NQ013: { code: "PHOTO_NOT_FOUND", status: 404 },
+  NQ014: { code: "ALREADY_IN_ANOTHER_QUEUE", status: 409 },
+  NQ015: { code: "NOT_YOUR_TURN", status: 409 },
+  NQ016: { code: "CALL_EXPIRED", status: 410 },
+  NQ017: { code: "COURT_BUSY", status: 409 },
+  NQ018: { code: "MATCH_NOT_FOUND", status: 404 },
+  NQ019: { code: "COLOR_NOT_IN_PALETTE", status: 400 },
+  NQ020: { code: "PARK_NOT_FOUND", status: 404 },
 };
 
 export function postgrestError(

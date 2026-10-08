@@ -18,16 +18,23 @@ Erros seguem sempre o mesmo formato:
 
 ---
 
-## POST /scan-court — validar QR Code e proximidade (US-02)
+## POST /scan-court — validar QR Code ou NFC e proximidade (US-02)
 
 ```json
 {
-  "payload": "neqst:v1:7c9e6679-7425-40de-944b-e07fc1f90ae7:Yk3fQ2...",
+  "payload": "https://app.neqst.com.br/q/7c9e6679-7425-40de-944b-e07fc1f90ae7?v=1&s=Yk3f...",
   "latitude": -23.561414,
   "longitude": -46.655881,
-  "accuracy": 18.5
+  "accuracy": 18.5,
+  "method": "qr",
+  "purpose": "join"
 }
 ```
+
+`method` é `"qr"` (padrão) ou `"nfc"` — o totem NFC grava a mesma URL
+assinada, então a validação é idêntica. `purpose` é `"join"` (padrão) ou
+`"start"`: o token serve para os dois, e quem decide é a chamada
+seguinte (`/join-queue` ou `/check-in`).
 
 `accuracy` é o erro em metros reportado pelo GPS
 (`Location.getCurrentPositionAsync` → `coords.accuracy`). Quando presente,
@@ -41,14 +48,18 @@ amplia o raio aceito até o teto de tolerância da quadra (padrão +200 m).
   "expiresAt": "2026-09-23T18:30:30.000Z",
   "ttlSeconds": 30,
   "distanceMeters": 12,
+  "method": "qr",
+  "purpose": "join",
   "court": {
     "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-    "slug": "quadra-central",
-    "name": "Quadra Central",
-    "address": "Av. Paulista, 1000",
+    "parkId": "1a2b...",
+    "number": 1,
+    "name": "Quadra 01",
+    "slug": "parque-ibirapuera-q1",
+    "surface": "clay",
     "status": "available",
-    "photoUrl": null,
-    "averageMatchMinutes": 20
+    "slotMinutes": 40,
+    "checkinMethods": ["qr", "nfc"]
   }
 }
 ```
@@ -64,6 +75,7 @@ habilita `join-queue`. Guarde apenas em memória.
 | `COURT_NOT_FOUND` | 404 | Quadra do QR não existe |
 | `COURT_UNAVAILABLE` | 409 | Quadra inativa ou marcada como indisponível |
 | `TOO_FAR_FROM_COURT` | 403 | Fora do raio — `details` traz `distanceMeters` e `allowedRadiusMeters` |
+| `METHOD_UNAVAILABLE` | 409 | Pediu NFC numa quadra sem totem (ou QR numa sem código) |
 
 ---
 
@@ -107,7 +119,61 @@ habilita `join-queue`. Guarde apenas em memória.
 | `PARTNER_REQUIRED` / `PARTNER_NOT_FOUND` | 400 / 404 | Dupla sem parceiro ou com parceiro inexistente |
 | `PARTNER_INVALID` | 409 | Parceiro é você mesmo ou já está na fila desta quadra |
 | `ALREADY_IN_QUEUE` | 409 | Você já está em um time nesta quadra |
+| `ALREADY_IN_ANOTHER_QUEUE` | 409 | Você já está na fila de outra quadra — a mensagem diz qual |
 | `COURT_UNAVAILABLE` | 409 | Quadra indisponível |
+
+---
+
+## POST /check-in — liberar o placar e iniciar (Sprint 3)
+
+```json
+{ "scanToken": "s3Kf9...", "side": "auto" }
+```
+
+É o "Check-in para jogar": quando é a vez do seu time, você escaneia o
+QR (ou encosta no totem) e a partida começa. Num parque público não há
+operador — quem libera o placar é quem vai jogar.
+
+`side` é `"auto"` (padrão) para iniciar a partida com o time na vez, ou
+`"open"` para ocupar o lado livre de uma partida em andamento (o
+"Adversário livre" da tela).
+
+**201** devolve o placar (`match_state`):
+
+```json
+{
+  "match_id": "...",
+  "court_name": "Quadra 01",
+  "mode": "double",
+  "slot_minutes": 40,
+  "is_live": true,
+  "remaining_seconds": 2398,
+  "side_a": { "entry_id": "...", "role": "challenger", "players": [ ] },
+  "side_b": { "entry_id": "...", "role": "holder", "open": false, "players": [ ] }
+}
+```
+
+| Código | HTTP | Quando |
+|---|---|---|
+| `NOT_YOUR_TURN` | 409 | Outro time está na vez |
+| `COURT_BUSY` | 409 | A partida atual ainda tem slot pela frente |
+| `CALL_EXPIRED` | 410 | Passou dos 5 minutos da chamada |
+| `SCAN_TOKEN_INVALID` | 400 | Token expirado, já usado ou de outro usuário |
+
+---
+
+## POST / GET /match — resultado da partida (Sprint 3)
+
+```json
+{ "matchId": "...", "winner": "a" }
+```
+
+Quem ganha fica: o lado vencedor segue em quadra como mandante e o
+próximo da fila entra como desafiante. Qualquer jogador dos dois lados
+reporta. Se ninguém reportar até o slot acabar, a partida encerra **sem
+vencedor** e a quadra fica sem mandante.
+
+`GET /match?matchId=<uuid>` devolve o placar (útil após reconexão).
 
 ---
 
@@ -349,6 +415,57 @@ await supabase.rpc("set_primary_court_photo", { p_photo_id: id });
 `courts_heatmap` devolve `occupancy` em `empty` / `low` / `busy` / `full`
 — é o indicador cheio/vazio da Sprint 2.
 
+### RPCs da Sprint 3 — uma por tela
+
+```ts
+// Lista de parques (lat/lng opcionais: a web abre antes de ter GPS)
+await supabase.rpc("parks_overview", {
+  p_latitude: coords?.latitude ?? null,
+  p_longitude: coords?.longitude ?? null,
+  p_radius_meters: 8000,
+});
+
+// Home do parque: resumo + todas as quadras já no formato da tela
+await supabase.rpc("park_screen", { p_park_id: parkId });
+
+// Tela da quadra: placar, fila em pilha de raquetes, meu estado
+await supabase.rpc("court_screen", { p_court_id: courtId });
+
+// O cartão "você está na fila" e a contagem da chamada
+await supabase.rpc("my_queue_state");
+
+// Escolher parceiro, com disponibilidade
+await supabase.rpc("search_partners", { p_query: "@bru" });
+
+// Perfil: raquete e tom do avatar
+await supabase.rpc("update_my_profile", {
+  p_full_name: "Rafael Moura",
+  p_frame_color: "#C49051",
+  p_grip_color: "#F1ECEF",
+  p_avatar_tone: 1,
+});
+
+// Paleta disponível (o app não precisa hardcodar as cores)
+await supabase.from("racket_palette").select("*").order("sort_order");
+```
+
+**Campos que a tela da quadra usa** (`court_screen`):
+
+| Campo | Para quê |
+|---|---|
+| `court.name` | "Quadra 01" (derivado do número no parque) |
+| `court.surface_label` | "Saibro" / "Rápida" / "Grama" |
+| `court.checkin_methods` | `["qr"]` ou `["qr","nfc"]` — quais abas mostrar |
+| `status_text` | "Em jogo" / "Livre" |
+| `players_line` | "D. Matsuo / M. Costa × T. Lima / J. Prado" |
+| `match.remaining_seconds` | Cronômetro do slot |
+| `queue[].stack` | Raquetes à frente (máx. 5) para desenhar a pilha |
+| `queue[].stack_more` | Quantas sobraram atrás da pilha |
+| `queue[].is_mine` | Destaca a linha do próprio time |
+| `court_accepting` | A quadra aceita entradas |
+| `can_join` | **Eu** posso entrar (não estou em outra fila) |
+| `my_state` | `free` / `queued` / `playing`, com onde |
+
 ### Tempo real (US-03)
 
 ```ts
@@ -394,3 +511,10 @@ tabela acima.
 | `NQ011` | Nota fora da faixa de 1 a 5 |
 | `NQ012` | Cota de fotos pendentes atingida |
 | `NQ013` | Foto não encontrada |
+| `NQ014` | Já está na fila de outra quadra |
+| `NQ015` | Não é a vez deste time |
+| `NQ016` | Janela de check-in expirada |
+| `NQ017` | Quadra ocupada |
+| `NQ018` | Partida não encontrada |
+| `NQ019` | Cor fora da paleta |
+| `NQ020` | Parque não encontrado |
