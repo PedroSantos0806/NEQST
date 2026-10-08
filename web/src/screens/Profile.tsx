@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { profileSummary, racketPalette, updateProfile } from "../lib/api";
 import { enablePush, isIos, isStandalone, pushSupported } from "../lib/push";
 import { invalidateMe, toneStyle } from "../lib/me";
@@ -9,6 +9,7 @@ import { BottomNav } from "../components/BottomNav";
 import { Camera, Check, ChevronLeft, ChevronRight, Lock } from "../components/icons";
 import { ErrorState, Loading, buttonStyle } from "../components/ui";
 import { initialsOf } from "../lib/format";
+import { authMessage } from "../lib/auth-messages";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../hooks/useAuth";
 import type { PaletteColor, ProfileSummary } from "../lib/types";
@@ -16,7 +17,11 @@ import type { PaletteColor, ProfileSummary } from "../lib/types";
 export function Profile() {
   const { signOut } = useAuth();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const parkId = lastPark();
+  // Quem chegou pelo link de "esqueci minha senha" tem uma sessão de
+  // recuperação: é a única janela em que dá para definir a senha nova.
+  const recovering = params.get("reset") === "1";
   const [data, setData] = useState<ProfileSummary | null>(null);
   const [palette, setPalette] = useState<PaletteColor[]>([]);
   const [frame, setFrame] = useState("#C49051");
@@ -28,6 +33,7 @@ export function Profile() {
   const [busy, setBusy] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [pwSent, setPwSent] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
 
   async function load() {
     setError(null);
@@ -47,6 +53,10 @@ export function Profile() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (recovering) setPwOpen(true);
+  }, [recovering]);
 
   // Cada escolha vale na hora: é assim que o jogador vê a raquete dele
   // mudar na pilha sem passar por um botão de salvar.
@@ -81,6 +91,25 @@ export function Profile() {
     }[result]);
   }
 
+  async function savePassword() {
+    if (newPassword.length < 8) {
+      setNotice("A senha precisa de pelo menos 8 caracteres.");
+      return;
+    }
+    setBusy(true);
+    const { error: cause } = await supabase.auth.updateUser({ password: newPassword });
+    setBusy(false);
+    setNewPassword("");
+    if (cause) {
+      setNotice(authMessage(cause));
+      return;
+    }
+    setNotice("Senha atualizada. Da próxima vez, entre com ela.");
+    setPwOpen(false);
+    params.delete("reset");
+    setParams(params, { replace: true });
+  }
+
   async function resetPassword() {
     const email = data?.profile?.email;
     if (!email) return;
@@ -90,7 +119,7 @@ export function Profile() {
     });
     setBusy(false);
     setPwSent(!cause);
-    setNotice(cause ? cause.message : "Enviamos um link de troca de senha para o seu e-mail.");
+    setNotice(cause ? authMessage(cause) : "Enviamos um link de troca de senha para o seu e-mail.");
   }
 
   if (error) return <ErrorState title="Não conseguimos carregar o perfil" detail={error.message} onRetry={load} />;
@@ -113,19 +142,21 @@ export function Profile() {
         {/* ----------------------------- topo ----------------------------- */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "22px 18px 20px", background: "var(--green)", color: "var(--chalk)", borderRadius: "0 0 16px 16px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            {parkId
-              ? (
-                <button
-                  type="button"
-                  className="press"
-                  onClick={() => navigate(`/parque/${parkId}`)}
-                  style={{ display: "flex", alignItems: "center", gap: 4, minHeight: 44, padding: "0 10px 0 0", background: "transparent", border: 0, color: "var(--chalk)" }}
-                >
-                  <ChevronLeft size={20} />
-                  <span className="bb" style={{ fontSize: 26, lineHeight: 1 }}>Perfil</span>
-                </button>
-              )
-              : <span className="bb" style={{ fontSize: 26, lineHeight: 1 }}>Perfil</span>}
+            {/*
+              Sem o parque na sessão (quem veio direto da lista) a barra
+              inferior não aparece — então a volta tem de estar sempre
+              aqui, ou a tela vira um beco sem saída.
+            */}
+            <button
+              type="button"
+              className="press"
+              onClick={() => navigate(parkId ? `/parque/${parkId}` : "/")}
+              aria-label={parkId ? "Voltar para as quadras" : "Voltar para os parques"}
+              style={{ display: "flex", alignItems: "center", gap: 4, minHeight: 44, padding: "0 10px 0 0", background: "transparent", border: 0, color: "var(--chalk)" }}
+            >
+              <ChevronLeft size={20} />
+              <span className="bb" style={{ fontSize: 26, lineHeight: 1 }}>Perfil</span>
+            </button>
             <span style={{ fontSize: 12, fontWeight: 600, color: "var(--mauve)" }}>{data.profile?.email}</span>
           </div>
 
@@ -243,20 +274,50 @@ export function Profile() {
 
           <Row
             icon={<Lock size={18} />}
-            label="Alterar senha"
-            hint={pwSent ? "Link enviado" : "Por e-mail"}
+            label={recovering ? "Defina a senha nova" : "Alterar senha"}
+            hint={recovering ? "Agora" : pwSent ? "Link enviado" : "Por e-mail"}
             expanded={pwOpen}
             onClick={() => setPwOpen((value) => !value)}
           />
           {pwOpen && (
             <div className="fade" style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: "var(--chalk)", border: "1.5px solid rgba(47,70,41,.2)", borderRadius: 8 }}>
-              <span style={{ fontSize: 13, lineHeight: 1.45, color: "var(--muted)" }}>
-                Mandamos um link para <strong>{data.profile?.email}</strong>. Trocar a senha por lá
-                evita que alguém com o celular na mão mude a sua.
-              </span>
-              <button type="button" className="press" disabled={busy} onClick={() => void resetPassword()} style={{ minHeight: 46, background: "var(--green)", color: "var(--chalk)", border: 0, borderRadius: 8, fontSize: 14, fontWeight: 700 }}>
-                Enviar link de troca de senha
-              </button>
+              {recovering
+                ? (
+                  <>
+                    <span style={{ fontSize: 13, lineHeight: 1.45, color: "var(--muted)" }}>
+                      Você entrou pelo link do e-mail. Escolha a senha nova agora — o link só
+                      vale uma vez.
+                    </span>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, fontWeight: 700 }}>
+                      Senha nova
+                      <input
+                        type="password"
+                        value={newPassword}
+                        onChange={(event) => setNewPassword(event.target.value)}
+                        autoComplete="new-password"
+                        minLength={8}
+                        style={{ height: 46, padding: "0 12px", background: "var(--bg)", border: "1.5px solid rgba(47,70,41,.35)", borderRadius: 8, fontSize: 15 }}
+                      />
+                      <span style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)" }}>
+                        Pelo menos 8 caracteres.
+                      </span>
+                    </label>
+                    <button type="button" className="press" disabled={busy} onClick={() => void savePassword()} style={{ minHeight: 46, background: "var(--green)", color: "var(--chalk)", border: 0, borderRadius: 8, fontSize: 14, fontWeight: 700 }}>
+                      Salvar nova senha
+                    </button>
+                  </>
+                )
+                : (
+                  <>
+                    <span style={{ fontSize: 13, lineHeight: 1.45, color: "var(--muted)" }}>
+                      Mandamos um link para <strong>{data.profile?.email}</strong>. Trocar a senha
+                      por lá evita que alguém com o celular na mão mude a sua.
+                    </span>
+                    <button type="button" className="press" disabled={busy} onClick={() => void resetPassword()} style={{ minHeight: 46, background: "var(--green)", color: "var(--chalk)", border: 0, borderRadius: 8, fontSize: 14, fontWeight: 700 }}>
+                      Enviar link de troca de senha
+                    </button>
+                  </>
+                )}
             </div>
           )}
 
