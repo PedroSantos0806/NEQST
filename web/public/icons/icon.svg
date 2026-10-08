@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="NEQST">
+  <rect width="512" height="512" rx="96" fill="#2F4629"/>
+  <g transform="translate(96 150) scale(5)">
+    <ellipse cx="16" cy="11" rx="13.5" ry="9" fill="#2F4629" stroke="#C49051" stroke-width="3"/>
+    <path d="M16 3v16M10 4.5v13M22 4.5v13M5 11h22M6.5 7h19M6.5 15h19" stroke="#F1ECEF" stroke-width="1" opacity=".8"/>
+    <path d="M29 9l8 1.2v1.6L29 13" fill="none" stroke="#C49051" stroke-width="2.4" stroke-linejoin="round"/>
+    <rect x="37" y="8.4" width="23" height="5.2" rx="2" fill="#F1ECEF"/>
+    <rect x="59" y="8" width="3.5" height="6" rx="1" fill="#C49051"/>
+  </g>
+</svg>

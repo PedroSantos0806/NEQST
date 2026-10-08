@@ -1,0 +1,256 @@
+/* ---------------------------------------------------------------------
+   Linguagem visual do protótipo: Archivo para texto, Bebas Neue para
+   números e títulos, e a paleta de saibro/verde.
+   --------------------------------------------------------------------- */
+
+:root {
+  --ink: #0a0e0b;
+  --green: #2f4629;
+  --chalk: #f1ecef;
+  --ocre: #c49051;
+  --rust: #b13f16;
+  --mauve: #d0c0c9;
+  --mist: #6d9cb7;
+  --sage: #74b69d;
+  --muted: #5b4f55;
+  --bg: #e6dde2;
+
+  --surface-clay: #b13f16;
+  --surface-hard: #39678c;
+  --surface-grass: #778845;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* O app é mobile-first; no desktop centraliza em vez de esticar. */
+  display: flex;
+  justify-content: center;
+  min-height: 100dvh;
+}
+
+#root {
+  width: 100%;
+  max-width: 480px;
+  min-height: 100dvh;
+  background: var(--bg);
+  position: relative;
+  overflow-x: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--ocre);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--green);
+}
+
+.bb {
+  font-family: "Bebas Neue", Impact, sans-serif;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
+.script {
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.scroll {
+  scrollbar-width: none;
+}
+
+.scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Alvo tocável mínimo de 44px (DoD de acessibilidade mobile). */
+.tap {
+  min-height: 44px;
+}
+
+/* --------------------------- animações ------------------------------ */
+
+.screen {
+  animation: enter 0.34s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.fade {
+  animation: fade 0.25s ease-out;
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.sheet {
+  animation: up 0.38s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes up {
+  from { transform: translateY(60px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.ball {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ocre);
+  left: 4px;
+  top: 12px;
+  box-shadow: inset -2px -2px 0 rgba(10, 14, 11, 0.22);
+}
+
+.ball.rally {
+  animation: rally 2.6s ease-in-out infinite;
+}
+
+@keyframes rally {
+  0% { left: 4px; top: 12px; }
+  25% { top: 0; }
+  50% { left: calc(100% - 18px); top: 12px; }
+  75% { top: 0; }
+  100% { left: 4px; top: 12px; }
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+.scanline {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  height: 2px;
+  background: var(--ocre);
+  animation: scan 1.7s ease-in-out infinite alternate;
+}
+
+@keyframes scan {
+  from { top: 16px; }
+  to { top: calc(100% - 18px); }
+}
+
+.wave {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--mist);
+  border-radius: 50%;
+  animation: wave 1.8s ease-out infinite;
+}
+
+.wave.w2 { animation-delay: 0.6s; }
+.wave.w3 { animation-delay: 1.2s; }
+
+@keyframes wave {
+  0% { transform: scale(0.45); opacity: 0.9; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+
+.drop {
+  animation: drop 0.95s cubic-bezier(0.3, 1.35, 0.55, 1) 0.15s both;
+}
+
+@keyframes drop {
+  0% { transform: translateY(-110px) rotate(-24deg); opacity: 0; }
+  45% { opacity: 1; }
+  100% { transform: translateY(0) rotate(var(--r, 0deg)); opacity: 1; }
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--ocre);
+  border-radius: 14px;
+  animation: ring 1.4s ease-out 0.9s infinite;
+}
+
+@keyframes ring {
+  0% { transform: scale(1); opacity: 0.9; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+.flash {
+  animation: flash 1.8s ease-out 2;
+}
+
+@keyframes flash {
+  0% { box-shadow: 0 0 0 0 rgba(196, 144, 81, 0.95); }
+  100% { box-shadow: 0 0 0 12px rgba(196, 144, 81, 0); }
+}
+
+.press {
+  transition: transform 0.12s ease;
+}
+
+.press:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ball.rally, .scanline, .wave, .ring, .flash, .screen, .sheet, .drop, .dot, .spin {
+    animation: none;
+  }
+}

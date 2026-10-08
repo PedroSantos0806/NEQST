@@ -33,6 +33,10 @@ conforme as decisões técnicas recomendadas no documento da sprint.
 
 ## Setup local (meta do DoD: ≤ 15 minutos)
 
+O repositório tem duas partes: o **backend** (Supabase) na raiz e o
+**app web** em [`web/`](web). A Vercel publica o `web/`; o
+[`vercel.json`](vercel.json) na raiz já aponta o build para lá.
+
 ```bash
 # 1. Pré-requisitos
 npm install -g supabase   # CLI do Supabase
@@ -89,6 +93,7 @@ Passo a passo completo (SSO Google/Apple, pg_cron, QR Codes impressos):
 
 | Caminho | O que é |
 |---|---|
+| `web/` | App web (Vite + React), o que a Vercel publica — ver [docs/web.md](docs/web.md) |
 | `supabase/migrations/` | Schema versionado: tabelas, RLS, RPCs, triggers, Realtime |
 | `db/full_setup.sql` | Todas as migrations concatenadas (gerado por `scripts/build-full-setup.sh`) |
 | `supabase/functions/` | Edge Functions em Deno (API HTTP) |
