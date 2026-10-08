@@ -29,8 +29,14 @@ port = 54324
 
 [auth]
 enabled = true
-site_url = "neqst://auth-callback"
-additional_redirect_urls = ["neqst://auth-callback", "exp://127.0.0.1:19000"]
+# A web usa URL https; o app, o esquema próprio. Os dois convivem.
+site_url = "env(APP_BASE_URL)"
+additional_redirect_urls = [
+  "neqst://auth-callback",
+  "exp://127.0.0.1:19000",
+  "http://localhost:8081/auth/callback",
+  "https://app.neqst.com.br/auth/callback",
+]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
@@ -77,6 +83,14 @@ verify_jwt = true
 
 [functions.admin-court-qr]
 verify_jwt = true
+
+# GET devolve a chave pública VAPID antes do login; POST/DELETE validam
+# o JWT dentro da própria função.
+[functions.register-web-push]
+verify_jwt = false
+
+[functions.court-photo]
+verify_jwt = false
 
 # Chamada por cron com header x-cron-secret, sem JWT de usuário.
 [functions.dispatch-notifications]

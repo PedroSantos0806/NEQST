@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "SUBSTITUA_TEAMID.com.neqst.app",
+        "paths": ["/q/*"]
+      }
+    ]
+  }
+}

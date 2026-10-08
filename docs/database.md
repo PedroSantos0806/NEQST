@@ -11,8 +11,9 @@ auth.users ──1:1── profiles
                       │
                       ├──< queue_entry_members >── queue_entries >── courts
                       │                                   │            │
-                      ├──< push_tokens                    │            │
-                      └──< notification_outbox <──────────┘            │
+                      ├──< push_tokens                    │            ├──< court_reviews
+                      ├──< web_push_subscriptions         │            ├──< court_photos
+                      └──< notification_outbox <──────────┘            ├──< court_occupancy_snapshots
                                                                        │
                                             scan_tokens ───────────────┘
 ```
@@ -72,6 +73,40 @@ O índice `notification_outbox_unique_event (entry_id, user_id, type)`
 garante que o "Prepare-se!" saia **uma vez só** por time, mesmo com o
 gatilho rodando a cada evento da fila.
 
+### `court_reviews` (Sprint 2)
+Nota de 1 a 5 e comentário, uma por jogador por quadra (`unique (court_id,
+user_id)`), editável. `rate_court` exige partida concluída naquela quadra
+— o parceiro de dupla conta como quem jogou.
+
+`courts.rating_avg` e `courts.rating_count` são mantidos por trigger, para
+a lista de quadras não precisar de join.
+
+### `court_photos` (Sprint 2)
+Metadado das fotos; o arquivo vive no bucket privado `court-photos`. A
+linha nasce `pending` e `is_uploaded = false` (ela precisa existir antes
+do upload, para gerar a URL assinada), e só aparece no app quando está
+`approved` **e** confirmada.
+
+- `court_photos_one_primary_per_court` — uma capa por quadra
+- `court_photos_quota` — 5 pendentes por jogador por quadra
+- `court_photos_sync_primary` — mantém `courts.cover_photo_path` na capa
+  aprovada (um **caminho** do Storage, não uma URL — `courts.photo_url`
+  segue reservado para URL externa), e volta a nulo se ela for rejeitada
+
+### `court_occupancy_snapshots` (Sprint 2)
+Uma amostra da fila por quadra a cada rodada de manutenção, com dia da
+semana e hora. Alimenta `court_occupancy_pattern` ("costuma encher nesse
+horário"). Retenção de 90 dias.
+
+Os limites de ocupação ficam na quadra (`busy_threshold`,
+`full_threshold`), não no código: 2 times na fila é tranquilo num clube e
+cheio numa quadra pública.
+
+### `web_push_subscriptions` (Sprint 2)
+O equivalente de `push_tokens` para o navegador: endpoint do push service
+mais as chaves `p256dh` e `auth`. Existe porque a Expo Push API não
+entrega em navegador — ver [`plataformas.md`](plataformas.md).
+
 ## Funções (RPC)
 
 | Função | Quem chama | O que faz |
@@ -86,6 +121,12 @@ gatilho rodando a cada evento da fila.
 | `start_match` / `finish_match` / `call_next` | staff | Operação da quadra |
 | `expire_stale_queue_entries` / `purge_expired_scan_tokens` / `run_maintenance` | cron | Limpeza |
 | `refresh_queue_notifications(court_id)` | trigger | Enfileira "Prepare-se!" e "É a sua vez!" |
+| `my_match_history` / `my_visited_courts` / `my_profile_summary` | app | Histórico e perfil (Sprint 2) |
+| `rate_court` / `court_reviews_page` / `can_review_court` | app | Avaliações (Sprint 2) |
+| `courts_heatmap` / `court_occupancy_pattern` | app | Mapa de calor (Sprint 2) |
+| `court_photos_page` | app | Fotos aprovadas (Sprint 2) |
+| `moderate_court_photo` / `set_primary_court_photo` / `pending_court_photos` | staff | Moderação (Sprint 2) |
+| `capture_occupancy_snapshots` | cron | Amostra da ocupação (Sprint 2) |
 
 Todas são `SECURITY DEFINER` com `search_path = ''` — cada objeto é
 referenciado pelo nome completo, o que fecha a porta para sequestro de
@@ -103,6 +144,10 @@ RLS ativo em todas as tabelas. O resumo:
 | `scan_tokens` | — | lê apenas os próprios |
 | `push_tokens` | — | CRUD apenas dos próprios devices |
 | `notification_outbox` | — | lê apenas as próprias notificações |
+| `court_reviews` | leitura | leitura; escreve só a própria |
+| `court_photos` | leitura das aprovadas | aprovadas + as próprias; remove as próprias |
+| `court_occupancy_snapshots` | leitura | leitura |
+| `web_push_subscriptions` | — | lê e remove apenas as próprias |
 
 `INSERT/UPDATE/DELETE` na fila foram **revogados** de `anon` e
 `authenticated`: só as funções `SECURITY DEFINER` escrevem. Um cliente com
@@ -118,6 +163,7 @@ remover o time de outra pessoa.
 ## Rotinas agendadas
 
 `run_maintenance()` (a cada 15 min) expira times parados há mais de 3h,
-limpa scan tokens antigos e descarta notificações com mais de 30 dias.
+limpa scan tokens antigos, captura os snapshots de ocupação e descarta
+notificações com mais de 30 dias e snapshots com mais de 90 dias.
 `dispatch-notifications` roda a cada ~10s. Agendamento em
 `supabase/migrations/20260923120900_jobs.sql`.

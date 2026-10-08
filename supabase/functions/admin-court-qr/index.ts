@@ -6,6 +6,12 @@
  * quadra (US-02: "QR Codes são gerados no admin/backend e impressos
  * fisicamente nas quadras").
  *
+ * Dois formatos por quadra:
+ *   printUrl — App Link https, o que vai impresso. A câmera do Android
+ *              abre o app da Play Store se instalado, senão o site.
+ *   payload  — esquema neqst:, lido pelo scanner de dentro do app.
+ *              Mantido para os códigos já impressos na Sprint 1.
+ *
  * POST /functions/v1/admin-court-qr  { courtId, rotate: true }
  *   Incrementa qr_secret_version, invalidando os códigos antigos.
  */
@@ -17,7 +23,7 @@ import {
   readJson,
   requireEnv,
 } from "../_shared/http.ts";
-import { buildCourtQrPayload } from "../_shared/qr.ts";
+import { buildCourtQrPayload, buildCourtQrUrl } from "../_shared/qr.ts";
 import { requireStaff, requireUser, serviceClient } from "../_shared/supabase.ts";
 
 interface Court {
@@ -55,6 +61,7 @@ Deno.serve(async (req) => {
       if (!current) throw new ApiError("COURT_NOT_FOUND", "Quadra não encontrada.", 404);
 
       const nextVersion = current.qr_secret_version + 1;
+      const appBaseUrl = requireEnv("APP_BASE_URL");
 
       const { error: updateError } = await admin
         .from("courts")
@@ -67,6 +74,7 @@ Deno.serve(async (req) => {
         courtId: current.id,
         name: current.name,
         version: nextVersion,
+        printUrl: await buildCourtQrUrl(current.id, nextVersion, secret, appBaseUrl),
         payload: await buildCourtQrPayload(current.id, nextVersion, secret),
         warning: "Os QR Codes impressos da versão anterior deixaram de funcionar.",
       });
@@ -85,12 +93,15 @@ Deno.serve(async (req) => {
     const { data, error } = await query.returns<Court[]>();
     if (error) throw new ApiError("DATABASE_ERROR", error.message, 500);
 
+    const appBaseUrl = requireEnv("APP_BASE_URL");
+
     const courts = await Promise.all(
       (data ?? []).map(async (court) => ({
         courtId: court.id,
         slug: court.slug,
         name: court.name,
         version: court.qr_secret_version,
+        printUrl: await buildCourtQrUrl(court.id, court.qr_secret_version, secret, appBaseUrl),
         payload: await buildCourtQrPayload(court.id, court.qr_secret_version, secret),
       })),
     );

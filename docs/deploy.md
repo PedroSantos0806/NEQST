@@ -57,7 +57,23 @@ supabase secrets set --env-file .env
 supabase secrets list
 ```
 
-Obrigatórios: `QR_SIGNING_SECRET`, `CRON_SECRET`.
+Obrigatórios: `QR_SIGNING_SECRET`, `CRON_SECRET`, `APP_BASE_URL`.
+
+Para a versão web (Sprint 2):
+
+```bash
+deno run scripts/generate-vapid.ts    # -> VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY
+
+supabase secrets set \
+  APP_BASE_URL="https://app.neqst.com.br" \
+  ALLOWED_ORIGINS="https://app.neqst.com.br" \
+  VAPID_PUBLIC_KEY="..." VAPID_PRIVATE_KEY="..." \
+  VAPID_SUBJECT="mailto:ops@seu-dominio.com.br"
+```
+
+Sem `VAPID_*`, o push no navegador é desligado (o worker avisa no log) e
+só o canal do app funciona. Sem `ALLOWED_ORIGINS`, o CORS fica em `*` —
+aceitável em dev, não em produção.
 `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY` são
 injetados automaticamente pelo runtime.
 
@@ -69,7 +85,7 @@ injetados automaticamente pelo runtime.
 ```bash
 supabase functions deploy scan-court join-queue leave-queue queue-status \
                           call-next register-push-token admin-court-qr \
-                          dispatch-notifications
+                          dispatch-notifications register-web-push court-photo
 ```
 
 `queue-status` e `dispatch-notifications` são declaradas com
@@ -96,7 +112,28 @@ select cron.schedule('neqst-maintenance', '*/15 * * * *',
 
 Conferir: `select * from cron.job;` e `select * from cron.job_run_details order by start_time desc limit 20;`
 
-## 6. Push notifications
+## 6. Storage das fotos (Sprint 2)
+
+O bucket `court-photos` é criado pela migration — confira em
+**Storage** no Dashboard. Ele é **privado** de propósito: o app recebe
+URLs assinadas, e assim uma foto rejeitada deixa de ser acessível.
+
+```sql
+select id, public, file_size_limit, allowed_mime_types from storage.buckets
+where id = 'court-photos';
+```
+
+Se o projeto tiver sido criado antes da migration, rode-a de novo — ela é
+idempotente.
+
+## 7. App Links (web + Play Store)
+
+O QR Code impresso é um link https, para a câmera nativa do Android abrir
+o app. Publique os dois arquivos `.well-known` no app web:
+[`docs/app-links/README.md`](app-links/README.md). Faça isso **antes** de
+subir o build para a loja — a verificação acontece na instalação.
+
+## 8. Push notifications
 
 O Expo cuida de FCM e APNs. No app:
 
@@ -112,7 +149,10 @@ await fetch(`${SUPABASE_URL}/functions/v1/register-push-token`, {
 No lado das lojas: credenciais APNs (`.p8`) no Expo e o `google-services.json`
 do Firebase para Android — `eas credentials` cuida dos dois.
 
-## 7. Quadras e QR Codes
+Na web, o fluxo é outro (service worker + VAPID) e está em
+[`plataformas.md`](plataformas.md#1-push-notifications).
+
+## 9. Quadras e QR Codes
 
 ```sql
 insert into public.courts (slug, name, address, latitude, longitude)
@@ -124,7 +164,7 @@ update public.profiles set role = 'admin' where email = 'voce@example.com';
 
 Depois gere e imprima os códigos: [`qr-codes.md`](qr-codes.md).
 
-## 8. CI
+## 10. CI
 
 `.github/workflows/ci.yml` roda a cada push/PR:
 
@@ -153,3 +193,7 @@ Para deploy automático, adicione um job com `SUPABASE_ACCESS_TOKEN` e
 - [ ] `pg_cron` agendado e verificado em `cron.job_run_details`
 - [ ] Backup diário (Dashboard → Database → Backups)
 - [ ] QR Codes de produção impressos e instalados nas quadras
+- [ ] `ALLOWED_ORIGINS` com as origens reais da web (não `*`)
+- [ ] `VAPID_*` configurados e push testado em Android/Chrome
+- [ ] `assetlinks.json` publicado e validado antes do build da loja
+- [ ] Bucket `court-photos` privado, com um moderador (`role = staff`) definido
