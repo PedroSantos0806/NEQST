@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Loading } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
+import { urlAuthError } from "../lib/auth-messages";
 
 /**
  * Volta do OAuth e do link de e-mail. O supabase-js já troca o código
@@ -17,7 +18,12 @@ export function AuthCallback() {
     if (loading) return;
 
     if (!session) {
-      navigate("/entrar", { replace: true });
+      // O Supabase manda o motivo na URL quando o link expirou ou já
+      // foi usado; sem motivo, foi a troca do código que não passou
+      // neste navegador. Nos dois casos quem explica é a tela de login.
+      navigate(urlAuthError() ? `/entrar${window.location.search}` : "/entrar?motivo=link", {
+        replace: true,
+      });
       return;
     }
 

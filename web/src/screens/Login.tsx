@@ -1,5 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { useAuth } from "../hooks/useAuth";
+import { authMessage, stripAuthParams, urlAuthError } from "../lib/auth-messages";
 import { buttonStyle } from "../components/ui";
 
 type Mode = "signin" | "signup" | "reset";
@@ -16,6 +19,8 @@ const inputStyle = {
 };
 
 export function Login() {
+  const { session, loading } = useAuth();
+  const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,6 +29,37 @@ export function Login() {
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
 
   const redirectTo = `${window.location.origin}/auth/callback`;
+
+  // Quem já está logado não tem o que fazer aqui. É isto que faltava
+  // quando o login "não acontecia nada": a sessão era criada e a tela
+  // continuava a mesma.
+  useEffect(() => {
+    if (loading || !session) return;
+    const pending = sessionStorage.getItem("neqst:after-login");
+    sessionStorage.removeItem("neqst:after-login");
+    navigate(pending ?? "/", { replace: true });
+  }, [loading, session, navigate]);
+
+  // Link de e-mail que falhou volta com o motivo na própria URL — ou,
+  // quando o navegador não tinha o par do código, com ?motivo=link.
+  useEffect(() => {
+    const failure = urlAuthError();
+    if (failure) {
+      setMessage({ tone: "error", text: failure });
+      stripAuthParams();
+      return;
+    }
+
+    if (new URLSearchParams(window.location.search).get("motivo") === "link") {
+      setMessage({
+        tone: "error",
+        text:
+          "Não deu para completar o link automaticamente neste navegador. "
+          + "Se você já confirmou o cadastro, é só entrar com e-mail e senha.",
+      });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -38,22 +74,26 @@ export function Login() {
         if (error) throw error;
         setMessage({ tone: "ok", text: "Enviamos um link de redefinição para o seu e-mail." });
       } else if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: { data: { full_name: name.trim() }, emailRedirectTo: redirectTo },
         });
         if (error) throw error;
-        setMessage({
-          tone: "ok",
-          text: "Conta criada. Se pedirmos confirmação, o link está no seu e-mail.",
-        });
+
+        // Com a confirmação de e-mail desligada no Supabase, o signUp já
+        // devolve sessão — aí o efeito acima leva direto para o app.
+        if (data.session) return;
+
+        setMode("signin");
+        setPassword("");
+        setMessage({ tone: "ok", text: "Confirme o seu cadastro no e-mail." });
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
     } catch (cause) {
-      setMessage({ tone: "error", text: (cause as Error).message });
+      setMessage({ tone: "error", text: authMessage(cause as Error) });
     } finally {
       setBusy(false);
     }
@@ -66,7 +106,7 @@ export function Login() {
       options: { redirectTo },
     });
     if (error) {
-      setMessage({ tone: "error", text: error.message });
+      setMessage({ tone: "error", text: authMessage(error) });
       setBusy(false);
     }
   }

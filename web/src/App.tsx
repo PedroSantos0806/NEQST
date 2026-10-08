@@ -10,6 +10,9 @@ import { Loading } from "./components/ui";
 import { useAuth } from "./hooks/useAuth";
 import type { ReactElement } from "react";
 
+/** Parâmetros que pertencem ao fluxo de login, não à rota. */
+const AUTH_PARAMS = ["code", "error", "error_code", "error_description", "state", "type"];
+
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
   const location = useLocation();
@@ -17,8 +20,18 @@ function Protected({ children }: { children: ReactElement }) {
   if (loading) return <Loading what="Carregando" />;
 
   if (!session) {
-    sessionStorage.setItem("neqst:after-login", location.pathname + location.search);
-    return <Navigate to="/entrar" replace />;
+    const params = new URLSearchParams(location.search);
+    const cameFromEmailLink = AUTH_PARAMS.some((key) => params.has(key));
+    AUTH_PARAMS.forEach((key) => params.delete(key));
+
+    // Sem os parâmetros do link: voltar para cá com um `code` já gasto
+    // só repetiria a falha.
+    const query = params.toString();
+    sessionStorage.setItem("neqst:after-login", location.pathname + (query ? `?${query}` : ""));
+
+    // Chegou com um código de e-mail e mesmo assim não há sessão: o
+    // link não pôde ser trocado neste navegador. Vale explicar.
+    return <Navigate to={cameFromEmailLink ? "/entrar?motivo=link" : "/entrar"} replace />;
   }
 
   return children;

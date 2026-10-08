@@ -51,14 +51,33 @@ supabase secrets set APP_BASE_URL="https://<seu-dominio>.vercel.app"
 ```
 
 **3. Redirect de login** — Dashboard › Authentication › URL
-Configuration:
+Configuration. **Este é o passo que mais dá problema**, porque o
+Supabase nasce com `http://localhost:3000` no Site URL.
 
-- Site URL: `https://<seu-dominio>.vercel.app`
-- Redirect URLs: `https://<seu-dominio>.vercel.app/auth/callback`
-  (e `http://localhost:5173/auth/callback` para o desenvolvimento)
+- **Site URL**: `https://<seu-dominio>.vercel.app`
+- **Redirect URLs**, uma por linha:
 
-Sem isso o login com Google volta para o lugar errado e a sessão se
-perde.
+  ```
+  https://<seu-dominio>.vercel.app/**
+  http://localhost:5173/**
+  ```
+
+Como o link de confirmação de e-mail usa o Site URL: o app passa o
+endereço de volta em `emailRedirectTo`, mas o Supabase só obedece se
+esse endereço casar com alguma das Redirect URLs. Quando não casa, ele
+**ignora em silêncio e cai no Site URL**. É exatamente por isso que o
+e-mail de confirmação chega apontando para
+`localhost:3000/?code=...` e o navegador mostra "não foi possível
+conectar ao servidor": o cadastro foi confirmado no servidor, só a
+volta é que foi para o endereço errado.
+
+Depois de corrigir, peça um e-mail novo — o link antigo continua
+apontando para o endereço velho.
+
+> O app aguenta o código chegar em **qualquer rota** (`/`, `/entrar`,
+> `/auth/callback`): o `detectSessionInUrl` do supabase-js troca o
+> código pela sessão onde quer que ele caia. O que ele não consegue
+> adivinhar é um domínio que não existe.
 
 Se o domínio mudar (ou sair do `*.vercel.app` para um domínio próprio),
 os três precisam ser atualizados — e os QR Codes já impressos param de

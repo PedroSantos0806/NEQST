@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
+import { invalidateMe } from "../lib/me";
 
 interface AuthValue {
   session: Session | null;
@@ -27,7 +28,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, next) => {
+      // Perfil é por pessoa: trocar de conta sem limpar o cache fazia o
+      // próximo login abrir com o nome e a raquete de quem saiu.
+      if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "USER_UPDATED") {
+        invalidateMe();
+      }
       setSession(next);
       setLoading(false);
     });
@@ -44,6 +50,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       signOut: async () => {
         await supabase.auth.signOut();
+        invalidateMe();
+        try {
+          sessionStorage.clear();
+        } catch {
+          /* modo privado: só perdemos a memória de navegação */
+        }
       },
     }),
     [session, loading],
