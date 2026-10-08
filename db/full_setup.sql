@@ -2918,3 +2918,2136 @@ grant select, delete on public.web_push_subscriptions to authenticated;
 -- Só o backend (service_role) usa: para o cliente, saber se OUTRO
 -- usuário tem push registrado não serve a nada e vaza informação.
 revoke all on function public.has_push_channel(uuid) from public, anon, authenticated;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008130000_parks.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 3 (alinhamento com o protótipo de frontend)
+-- 15. Parques: o nível acima das quadras
+--
+-- O protótipo abre numa lista de parques (Ibirapuera, Villa-Lobos,
+-- Aclimação, Povo), cada um com várias quadras numeradas e com
+-- superfícies diferentes. A quadra deixa de ser a entidade de topo.
+-- =====================================================================
+
+do $$ begin
+  create type public.court_surface as enum ('clay', 'hard', 'grass');
+exception when duplicate_object then null; end $$;
+
+comment on type public.court_surface is
+  'clay = saibro, hard = rápida, grass = grama. Rótulo e cor ficam no app.';
+
+create table if not exists public.parks (
+  id              uuid primary key default gen_random_uuid(),
+  slug            extensions.citext not null unique,
+  name            text not null,
+  -- "Vila Mariana · Zona Sul" — aparece sob o nome na lista
+  district        text,
+  city            text,
+  address         text,
+  latitude        double precision not null check (latitude between -90 and 90),
+  longitude       double precision not null check (longitude between -180 and 180),
+  -- Cor de fundo do cartão quando não há foto
+  tone_color      text check (tone_color is null or tone_color ~ '^#[0-9A-Fa-f]{6}$'),
+  photo_url       text,
+  photo_alt       text,
+  is_active       boolean not null default true,
+  opens_at        time,
+  closes_at       time,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+
+  constraint parks_name_length check (char_length(name) between 2 and 120),
+  constraint parks_slug_format check (slug ~ '^[a-z0-9-]{3,60}$')
+);
+
+comment on table  public.parks is 'Parque ou complexo esportivo que abriga várias quadras.';
+comment on column public.parks.photo_alt is
+  'Texto alternativo da foto — o protótipo descreve a imagem ("quadra de saibro").';
+
+create index if not exists parks_active_idx  on public.parks (is_active);
+create index if not exists parks_latlng_idx  on public.parks (latitude, longitude);
+
+drop trigger if exists parks_set_updated_at on public.parks;
+create trigger parks_set_updated_at
+  before update on public.parks
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------
+-- A quadra agora pertence a um parque, tem número e superfície
+-- ---------------------------------------------------------------------
+alter table public.courts add column if not exists park_id      uuid references public.parks (id) on delete cascade;
+alter table public.courts add column if not exists court_number smallint;
+alter table public.courts add column if not exists surface      public.court_surface;
+
+comment on column public.courts.court_number is
+  'Número dentro do parque: o app mostra "Quadra 01", "Quadra 02".';
+
+-- Quadras que existiam antes do conceito de parque ganham um parque
+-- derivado dos próprios dados, para a coluna poder virar obrigatória.
+do $$
+declare
+  v_court record;
+  v_park  uuid;
+  v_slug  text;
+begin
+  for v_court in
+    select id, name, slug, city, address, latitude, longitude
+    from public.courts
+    where park_id is null
+    order by created_at
+  loop
+    v_slug := left('parque-' || v_court.slug::text, 60);
+
+    select p.id into v_park from public.parks p where p.slug = v_slug::extensions.citext;
+
+    if v_park is null then
+      insert into public.parks (slug, name, city, address, latitude, longitude)
+      values (v_slug, v_court.name, v_court.city, v_court.address,
+              v_court.latitude, v_court.longitude)
+      returning id into v_park;
+    end if;
+
+    update public.courts
+       set park_id = v_park,
+           court_number = coalesce(court_number, 1)
+     where id = v_court.id;
+  end loop;
+end $$;
+
+update public.courts set court_number = 1 where court_number is null;
+update public.courts set surface = 'clay' where surface is null;
+
+alter table public.courts alter column park_id      set not null;
+alter table public.courts alter column court_number set not null;
+alter table public.courts alter column surface      set not null;
+alter table public.courts alter column surface      set default 'clay';
+
+do $$ begin
+  alter table public.courts
+    add constraint courts_number_positive check (court_number between 1 and 99);
+exception when duplicate_object then null; end $$;
+
+-- Dois "Quadra 01" no mesmo parque confundiriam o jogador na hora de
+-- achar a quadra física.
+create unique index if not exists courts_number_per_park
+  on public.courts (park_id, court_number);
+
+create index if not exists courts_park_idx on public.courts (park_id);
+
+-- ---------------------------------------------------------------------
+-- Rótulo da quadra, do jeito que o app mostra
+-- ---------------------------------------------------------------------
+create or replace function public.court_label(p_number smallint)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select 'Quadra ' || lpad(p_number::text, 2, '0');
+$$;
+
+-- ---------------------------------------------------------------------
+-- RLS
+-- ---------------------------------------------------------------------
+alter table public.parks enable row level security;
+
+drop policy if exists "parques: leitura pública" on public.parks;
+create policy "parques: leitura pública"
+  on public.parks for select
+  to anon, authenticated
+  using (is_active or public.is_staff());
+
+drop policy if exists "parques: admin gerencia" on public.parks;
+create policy "parques: admin gerencia"
+  on public.parks for all
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+revoke all on public.parks from anon, authenticated;
+grant select on public.parks to anon, authenticated;
+
+grant execute on function public.court_label(smallint) to anon, authenticated;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008130100_matches.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 3
+-- 16. Partida com dois lados e "quem ganha fica"
+--
+-- A Sprint 1 modelava um time em quadra. O protótipo mostra o jogo real:
+-- lado A contra lado B, e no fim do slot o vencedor permanece como
+-- mandante enquanto o próximo time da fila entra como desafiante.
+--
+--   mandante (lado B)  ──── vence ────▶ continua como mandante
+--   desafiante (lado A) ─── perde ────▶ sai
+--                                        ▲
+--                      próximo da fila ──┘
+--
+-- Quando a quadra está livre, o primeiro time entra como lado A e o
+-- lado B fica aberto — é o "Adversário livre" do protótipo.
+-- =====================================================================
+
+do $$ begin
+  create type public.match_side as enum ('a', 'b');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.match_end_reason as enum
+    ('reported', 'slot_expired', 'abandoned', 'cancelled');
+exception when duplicate_object then null; end $$;
+
+create table if not exists public.matches (
+  id                 uuid primary key default gen_random_uuid(),
+  court_id           uuid not null references public.courts (id) on delete cascade,
+
+  -- Lado A é sempre o desafiante que veio da fila.
+  side_a_entry_id    uuid not null references public.queue_entries (id) on delete cascade,
+  -- Lado B é o mandante. Nulo = "Adversário livre": a quadra estava
+  -- vazia e ninguém ocupou o outro lado ainda.
+  side_b_entry_id    uuid references public.queue_entries (id) on delete set null,
+
+  mode               public.queue_mode not null,
+  slot_minutes       smallint not null check (slot_minutes between 5 and 240),
+
+  started_at         timestamptz not null default now(),
+  expires_at         timestamptz not null,
+  ended_at           timestamptz,
+  winner_side        public.match_side,
+  end_reason         public.match_end_reason,
+  reported_by        uuid references auth.users (id) on delete set null,
+
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+
+  constraint matches_sides_differ
+    check (side_b_entry_id is null or side_b_entry_id <> side_a_entry_id),
+  -- Vencedor só existe em partida encerrada, e um lado vazio não vence.
+  constraint matches_winner_needs_end
+    check ((winner_side is null) or (ended_at is not null)),
+  constraint matches_end_needs_reason
+    check ((ended_at is null) = (end_reason is null)),
+  constraint matches_winner_b_needs_side_b
+    check (winner_side is distinct from 'b' or side_b_entry_id is not null)
+);
+
+comment on table  public.matches is 'Uma partida em quadra: desafiante (lado A) contra mandante (lado B).';
+comment on column public.matches.side_b_entry_id is
+  'Mandante. Nulo quando a quadra estava livre e o outro lado segue aberto.';
+comment on column public.matches.expires_at is
+  'started_at + slot da quadra. Chegando aqui, a partida encerra e a fila anda.';
+
+-- Uma partida em andamento por quadra. É esta a invariante agora: o
+-- índice da Sprint 1 (queue_entries_one_playing_per_court) presumia um
+-- único time em quadra e impediria os dois lados de jogarem.
+create unique index if not exists matches_one_live_per_court
+  on public.matches (court_id)
+  where ended_at is null;
+
+drop index if exists public.queue_entries_one_playing_per_court;
+
+create index if not exists matches_court_idx    on public.matches (court_id, started_at desc);
+create index if not exists matches_live_idx     on public.matches (expires_at) where ended_at is null;
+create index if not exists matches_side_a_idx   on public.matches (side_a_entry_id);
+create index if not exists matches_side_b_idx   on public.matches (side_b_entry_id);
+
+drop trigger if exists matches_set_updated_at on public.matches;
+create trigger matches_set_updated_at
+  before update on public.matches
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------
+-- O mandante atual da quadra
+--
+-- Fica numa coluna, e não calculado a cada leitura: a tela da quadra e
+-- o mapa de calor consultam isso toda hora.
+-- ---------------------------------------------------------------------
+alter table public.courts add column if not exists holder_entry_id uuid
+  references public.queue_entries (id) on delete set null;
+
+comment on column public.courts.holder_entry_id is
+  'Time que venceu a última partida e segue em quadra. Nulo = quadra sem mandante.';
+
+-- ---------------------------------------------------------------------
+-- Slot de tempo: limite rígido, não média
+--
+-- O protótipo trata slotMinutes como prazo ("Faltam ~12 min", e no fim
+-- chama o próximo). average_match_minutes continua existindo para não
+-- quebrar o que já consome, mas passa a espelhar o slot.
+-- ---------------------------------------------------------------------
+alter table public.courts add column if not exists slot_minutes smallint;
+
+update public.courts
+   set slot_minutes = coalesce(slot_minutes, greatest(least(average_match_minutes, 90), 20))
+ where slot_minutes is null;
+
+alter table public.courts alter column slot_minutes set default 40;
+alter table public.courts alter column slot_minutes set not null;
+
+do $$ begin
+  alter table public.courts
+    add constraint courts_slot_minutes_range check (slot_minutes between 20 and 90);
+exception when duplicate_object then null; end $$;
+
+comment on column public.courts.slot_minutes is
+  'Duração máxima de uma partida (protótipo: 40 min, faixa 20-90).';
+
+create or replace function public.courts_sync_slot()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  -- Mantém average_match_minutes (usado nas estimativas da Sprint 1 e 2)
+  -- alinhado ao slot, para as duas leituras não divergirem.
+  if new.slot_minutes is distinct from old.slot_minutes
+     or new.average_match_minutes is distinct from old.average_match_minutes then
+    new.average_match_minutes := new.slot_minutes;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists courts_sync_slot_trigger on public.courts;
+create trigger courts_sync_slot_trigger
+  before update on public.courts
+  for each row execute function public.courts_sync_slot();
+
+update public.courts set average_match_minutes = slot_minutes
+where average_match_minutes <> slot_minutes;
+
+-- Iniciais e nome curto, como o protótipo monta ("D. Matsuo", "DM")
+create or replace function public.initials_of(p_name text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select case
+    when coalesce(trim(p_name), '') = '' then '?'
+    else upper(
+      left(split_part(trim(p_name), ' ', 1), 1) ||
+      case
+        when array_length(regexp_split_to_array(trim(p_name), '\s+'), 1) > 1
+          then left((regexp_split_to_array(trim(p_name), '\s+'))[
+            array_length(regexp_split_to_array(trim(p_name), '\s+'), 1)], 1)
+        else ''
+      end
+    )
+  end;
+$$;
+
+create or replace function public.short_name_of(p_name text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select case
+    when coalesce(trim(p_name), '') = '' then 'Jogador'
+    when array_length(regexp_split_to_array(trim(p_name), '\s+'), 1) > 1
+      then split_part(trim(p_name), ' ', 1) || ' ' ||
+           left((regexp_split_to_array(trim(p_name), '\s+'))[
+             array_length(regexp_split_to_array(trim(p_name), '\s+'), 1)], 1) || '.'
+    else trim(p_name)
+  end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Jogadores de um lado, no formato que o placar usa
+-- ---------------------------------------------------------------------
+create or replace function public.match_side_players(p_entry_id uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'user_id',   m.user_id,
+        'username',  p.username,
+        'full_name', p.full_name,
+        'initials',  public.initials_of(coalesce(p.full_name, p.username::text)),
+        'short_name', public.short_name_of(coalesce(p.full_name, p.username::text))
+      )
+      order by m.role, m.created_at
+    ),
+    '[]'::jsonb
+  )
+  from public.queue_entry_members m
+  left join public.profiles p on p.id = m.user_id
+  where m.entry_id = p_entry_id;
+$$;
+
+grant execute on function public.initials_of(text)        to anon, authenticated;
+grant execute on function public.short_name_of(text)      to anon, authenticated;
+grant execute on function public.match_side_players(uuid) to anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- RLS
+-- ---------------------------------------------------------------------
+alter table public.matches enable row level security;
+
+drop policy if exists "partidas: leitura pública" on public.matches;
+create policy "partidas: leitura pública"
+  on public.matches for select
+  to anon, authenticated
+  using (true);
+
+revoke all on public.matches from anon, authenticated;
+grant select on public.matches to anon, authenticated;
+
+-- Realtime: o placar da quadra é ao vivo.
+alter table public.matches replica identity full;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'matches'
+  ) then
+    alter publication supabase_realtime add table public.matches;
+  end if;
+end $$;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008130200_queue_rules.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 3
+-- 17. Regras da fila alinhadas ao protótipo
+--
+-- Três mudanças de comportamento:
+--
+--   1. Uma fila por jogador em TODO o app, não por quadra. O protótipo
+--      recusa entrar em qualquer fila com "Você já está na fila da
+--      Quadra 04".
+--   2. Quem inicia a partida é o próprio jogador, escaneando o QR/NFC
+--      da quadra. Não existe operador num parque público.
+--   3. Chamado tem prazo: 5 minutos para o check-in, senão a vez passa.
+--
+-- Códigos novos:
+--   NQ014 jogador já está em uma fila (em qualquer quadra)
+--   NQ015 não é a vez deste time
+--   NQ016 chamada expirada
+--   NQ017 a quadra ainda está ocupada
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- 1. Uma fila por jogador em todo o app
+-- ---------------------------------------------------------------------
+drop index if exists public.queue_entry_members_one_active_per_court;
+
+create unique index if not exists queue_entry_members_one_active_per_player
+  on public.queue_entry_members (user_id)
+  where is_active;
+
+comment on index public.queue_entry_members_one_active_per_player is
+  'Um jogador em uma fila só, em qualquer quadra de qualquer parque.';
+
+-- ---------------------------------------------------------------------
+-- 2. Prazo da chamada
+-- ---------------------------------------------------------------------
+alter table public.courts add column if not exists call_window_seconds integer not null default 300;
+
+do $$ begin
+  alter table public.courts
+    add constraint courts_call_window_range
+    check (call_window_seconds between 60 and 1800);
+exception when duplicate_object then null; end $$;
+
+comment on column public.courts.call_window_seconds is
+  'Tempo para comparecer depois de ser chamado (protótipo: 300s).';
+
+alter table public.queue_entries add column if not exists call_expires_at timestamptz;
+
+comment on column public.queue_entries.call_expires_at is
+  'Fim da janela de check-in. Passou disso, o time é expirado e a vez anda.';
+
+create index if not exists queue_entries_called_idx
+  on public.queue_entries (call_expires_at)
+  where status = 'ready';
+
+-- ---------------------------------------------------------------------
+-- Onde o jogador está agora (usado na busca de parceiro e no bloqueio)
+-- ---------------------------------------------------------------------
+create or replace function public.player_state(p_user_id uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    (
+      select jsonb_build_object(
+        'state', case
+                   when e.status = 'playing' then 'playing'
+                   else 'queued'
+                 end,
+        'entry_id',   e.id,
+        'court_id',   c.id,
+        'court_name', public.court_label(c.court_number),
+        'park_id',    pk.id,
+        'park_name',  pk.name,
+        'where', case
+                   when e.status = 'playing'
+                     then 'Em jogo · ' || public.court_label(c.court_number)
+                   else 'Na fila · ' || public.court_label(c.court_number)
+                 end
+      )
+      from public.queue_entry_members m
+      join public.queue_entries e on e.id = m.entry_id
+      join public.courts c        on c.id = e.court_id
+      join public.parks pk        on pk.id = c.park_id
+      where m.user_id = p_user_id and m.is_active
+      limit 1
+    ),
+    jsonb_build_object('state', 'free')
+  );
+$$;
+
+comment on function public.player_state(uuid) is
+  'free / queued / playing, com a quadra onde está. Alimenta a lista de parceiros.';
+
+-- ---------------------------------------------------------------------
+-- join_queue: agora recusa quem já está em qualquer fila
+-- ---------------------------------------------------------------------
+create or replace function public.join_queue(
+  p_scan_token text,
+  p_mode       public.queue_mode default 'single',
+  p_partner    text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user       uuid := auth.uid();
+  v_token      public.scan_tokens%rowtype;
+  v_court      public.courts%rowtype;
+  v_partner_id uuid;
+  v_entry_id   uuid;
+  v_needle     text;
+  v_state      jsonb;
+begin
+  if v_user is null then
+    raise exception 'Autenticação obrigatória' using errcode = 'NQ001';
+  end if;
+
+  -- 1. Prova de presença (QR ou NFC validados na Edge Function)
+  select * into v_token
+  from public.scan_tokens t
+  where t.token_hash = public.hash_scan_token(p_scan_token)
+  for update;
+
+  if not found
+     or v_token.user_id <> v_user
+     or v_token.consumed_at is not null
+     or v_token.expires_at <= now() then
+    raise exception 'Escaneie o QR Code da quadra novamente para entrar na fila'
+      using errcode = 'NQ002';
+  end if;
+
+  -- 2. Quadra disponível
+  select * into v_court from public.courts c where c.id = v_token.court_id for update;
+
+  if not found or not v_court.is_active or v_court.status = 'unavailable' then
+    raise exception 'Esta quadra está indisponível no momento' using errcode = 'NQ003';
+  end if;
+
+  -- 3. Uma fila por jogador em todo o app
+  v_state := public.player_state(v_user);
+
+  if v_state ->> 'state' <> 'free' then
+    if (v_state ->> 'court_id')::uuid = v_court.id then
+      raise exception 'Você já está nesta fila' using errcode = 'NQ004';
+    end if;
+    raise exception 'Você já está na fila da %', v_state ->> 'court_name'
+      using errcode = 'NQ014';
+  end if;
+
+  -- 4. Parceiro de dupla
+  if p_mode = 'double' then
+    v_needle := regexp_replace(lower(trim(coalesce(p_partner, ''))), '^@', '');
+
+    if v_needle = '' then
+      raise exception 'Informe o @username ou e-mail do parceiro' using errcode = 'NQ005';
+    end if;
+
+    select p.id into v_partner_id
+    from public.profiles p
+    where p.username = v_needle::extensions.citext
+       or p.email    = v_needle::extensions.citext
+    limit 1;
+
+    if v_partner_id is null then
+      raise exception 'Parceiro não encontrado: %', p_partner using errcode = 'NQ005';
+    end if;
+
+    if v_partner_id = v_user then
+      raise exception 'Escolha outro jogador como parceiro' using errcode = 'NQ006';
+    end if;
+
+    v_state := public.player_state(v_partner_id);
+    if v_state ->> 'state' <> 'free' then
+      raise exception 'Seu parceiro está %', lower(coalesce(v_state ->> 'where', 'indisponível'))
+        using errcode = 'NQ006';
+    end if;
+  end if;
+
+  -- 5. Cria o time
+  insert into public.queue_entries (court_id, mode, created_by, scan_token_id)
+  values (v_court.id, p_mode, v_user, v_token.id)
+  returning id into v_entry_id;
+
+  insert into public.queue_entry_members (entry_id, court_id, user_id, role)
+  values (v_entry_id, v_court.id, v_user, 'owner');
+
+  if v_partner_id is not null then
+    insert into public.queue_entry_members (entry_id, court_id, user_id, role)
+    values (v_entry_id, v_court.id, v_partner_id, 'partner');
+
+    perform public.enqueue_team_notification(
+      v_entry_id,
+      'queue_partner_added',
+      'Você entrou numa dupla',
+      format('Você foi adicionado a um time na %s.', public.court_label(v_court.court_number)),
+      jsonb_build_object('court_id', v_court.id, 'entry_id', v_entry_id)
+    );
+  end if;
+
+  -- 6. Consome o token (uso único)
+  update public.scan_tokens
+     set consumed_at = now(), consumed_by_entry = v_entry_id
+   where id = v_token.id;
+
+  -- 7. Quadra livre e fila vazia? Então já é a vez deste time: chama
+  -- agora, abrindo a janela de check-in. Sem isso, quem chega numa
+  -- quadra vazia ficaria esperando um chamado que nunca vem.
+  perform public.call_next_team(v_court.id);
+
+  return public.queue_entry_state(v_entry_id);
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Núcleo de abrir partida
+--
+-- Compartilhado pelo check-in do jogador e pela operação do parque, para
+-- os dois caminhos não divergirem: a Sprint 1 marcava a inscrição como
+-- 'playing' sem criar partida, o que deixaria a tela da quadra dizendo
+-- "Livre" com gente jogando.
+-- ---------------------------------------------------------------------
+create or replace function public.open_match(p_entry_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_entry    public.queue_entries%rowtype;
+  v_court    public.courts%rowtype;
+  v_first    uuid;
+  v_live     public.matches%rowtype;
+  v_match_id uuid;
+  v_holder   uuid;
+begin
+  select * into v_entry from public.queue_entries e where e.id = p_entry_id for update;
+  if not found then
+    raise exception 'Time não encontrado' using errcode = 'NQ007';
+  end if;
+  if v_entry.status not in ('waiting', 'ready') then
+    raise exception 'Este time não pode iniciar uma partida agora' using errcode = 'NQ009';
+  end if;
+
+  select * into v_court from public.courts c where c.id = v_entry.court_id for update;
+  if not v_court.is_active or v_court.status = 'unavailable' then
+    raise exception 'Esta quadra está indisponível no momento' using errcode = 'NQ003';
+  end if;
+
+  -- É a vez deste time?
+  select qp.entry_id into v_first
+  from public.queue_positions qp
+  where qp.court_id = v_court.id
+  order by qp.position
+  limit 1;
+
+  if v_first is distinct from v_entry.id then
+    raise exception 'Ainda não é a vez do seu time' using errcode = 'NQ015';
+  end if;
+
+  -- A partida anterior precisa ter acabado (ou o slot estourado)
+  select * into v_live
+  from public.matches mt
+  where mt.court_id = v_court.id and mt.ended_at is null
+  for update;
+
+  if found then
+    if v_live.expires_at > now() then
+      raise exception 'A quadra está ocupada por mais % minuto(s)',
+        greatest(1, ceil(extract(epoch from (v_live.expires_at - now())) / 60)::integer)
+        using errcode = 'NQ017';
+    end if;
+    -- Slot estourado sem ninguém reportar: encerra sem vencedor.
+    perform public.close_match(v_live.id, null, 'slot_expired');
+  end if;
+
+  select c.holder_entry_id into v_holder from public.courts c where c.id = v_court.id;
+
+  insert into public.matches
+    (court_id, side_a_entry_id, side_b_entry_id, mode, slot_minutes, expires_at)
+  values
+    (v_court.id, v_entry.id, v_holder, v_entry.mode, v_court.slot_minutes,
+     now() + make_interval(mins => v_court.slot_minutes))
+  returning id into v_match_id;
+
+  update public.queue_entries
+     set status = 'playing', called_at = coalesce(called_at, now()), started_at = now()
+   where id = v_entry.id;
+
+  update public.courts set status = 'in_game' where id = v_court.id;
+
+  return public.match_state(v_match_id);
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- 3. Check-in do jogador: libera o placar e inicia a partida
+--
+-- É o "Check-in para jogar" do protótipo. Exige um scan token novo —
+-- escanear de longe para iniciar uma partida que não vai acontecer
+-- travaria a quadra para todo mundo.
+-- ---------------------------------------------------------------------
+create or replace function public.check_in_and_start(p_scan_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user  uuid := auth.uid();
+  v_token public.scan_tokens%rowtype;
+  v_entry public.queue_entries%rowtype;
+  v_state jsonb;
+begin
+  if v_user is null then
+    raise exception 'Autenticação obrigatória' using errcode = 'NQ001';
+  end if;
+
+  select * into v_token
+  from public.scan_tokens t
+  where t.token_hash = public.hash_scan_token(p_scan_token)
+  for update;
+
+  if not found
+     or v_token.user_id <> v_user
+     or v_token.consumed_at is not null
+     or v_token.expires_at <= now() then
+    raise exception 'Escaneie o QR Code da quadra para confirmar que você chegou'
+      using errcode = 'NQ002';
+  end if;
+
+  select e.* into v_entry
+  from public.queue_entry_members m
+  join public.queue_entries e on e.id = m.entry_id
+  where m.user_id = v_user and m.is_active and e.court_id = v_token.court_id;
+
+  if not found then
+    raise exception 'Você não está na fila desta quadra' using errcode = 'NQ007';
+  end if;
+
+  -- Chamada expirada: a vez já passou
+  if v_entry.status = 'ready'
+     and v_entry.call_expires_at is not null
+     and v_entry.call_expires_at <= now() then
+    raise exception 'O tempo para o check-in terminou' using errcode = 'NQ016';
+  end if;
+
+  v_state := public.open_match(v_entry.id);
+
+  update public.scan_tokens
+     set consumed_at = now(), consumed_by_entry = v_entry.id
+   where id = v_token.id;
+
+  return v_state;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Encerrar a partida (uso interno: aplica o "quem ganha fica")
+-- ---------------------------------------------------------------------
+create or replace function public.close_match(
+  p_match_id uuid,
+  p_winner   public.match_side,
+  p_reason   public.match_end_reason,
+  p_reporter uuid default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_match  public.matches%rowtype;
+  v_winner uuid;
+  v_loser  uuid;
+begin
+  select * into v_match from public.matches mt where mt.id = p_match_id for update;
+  if not found then
+    raise exception 'Partida não encontrada' using errcode = 'NQ018';
+  end if;
+  if v_match.ended_at is not null then
+    return public.match_state(p_match_id);
+  end if;
+
+  update public.matches
+     set ended_at    = now(),
+         winner_side = p_winner,
+         end_reason  = p_reason,
+         reported_by = p_reporter
+   where id = p_match_id;
+
+  -- Quem ganha fica; quem perde (e quem jogou sem vencedor) sai.
+  if p_winner = 'a' then
+    v_winner := v_match.side_a_entry_id;
+    v_loser  := v_match.side_b_entry_id;
+  elsif p_winner = 'b' then
+    v_winner := v_match.side_b_entry_id;
+    v_loser  := v_match.side_a_entry_id;
+  end if;
+
+  if v_loser is not null then
+    update public.queue_entries
+       set status = 'done', ended_at = now()
+     where id = v_loser and status = 'playing';
+  end if;
+
+  if v_winner is null then
+    -- Sem vencedor: os dois lados saem e a quadra fica sem mandante.
+    update public.queue_entries
+       set status = 'done', ended_at = now()
+     where id in (v_match.side_a_entry_id, v_match.side_b_entry_id)
+       and status = 'playing';
+  end if;
+
+  update public.courts
+     set holder_entry_id = v_winner,
+         status = case
+                    when status = 'unavailable' then 'unavailable'::public.court_status
+                    else 'available'::public.court_status
+                  end
+   where id = v_match.court_id;
+
+  -- Com a quadra livre, o próximo time é chamado na hora.
+  perform public.call_next_team(v_match.court_id);
+
+  return public.match_state(p_match_id);
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Reportar o resultado — qualquer jogador das duas equipes
+-- ---------------------------------------------------------------------
+create or replace function public.report_match_result(
+  p_match_id uuid,
+  p_winner   public.match_side
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user  uuid := auth.uid();
+  v_match public.matches%rowtype;
+begin
+  if v_user is null then
+    raise exception 'Autenticação obrigatória' using errcode = 'NQ001';
+  end if;
+  if p_winner is null then
+    raise exception 'Informe o lado vencedor' using errcode = 'NQ011';
+  end if;
+
+  select * into v_match from public.matches mt where mt.id = p_match_id;
+  if not found then
+    raise exception 'Partida não encontrada' using errcode = 'NQ018';
+  end if;
+  if v_match.ended_at is not null then
+    raise exception 'Esta partida já foi encerrada' using errcode = 'NQ009';
+  end if;
+
+  if not exists (
+    select 1 from public.queue_entry_members m
+    where m.user_id = v_user
+      and m.entry_id in (v_match.side_a_entry_id, v_match.side_b_entry_id)
+  ) and not public.is_staff() then
+    raise exception 'Só quem está em quadra reporta o resultado' using errcode = 'NQ008';
+  end if;
+
+  if p_winner = 'b' and v_match.side_b_entry_id is null then
+    raise exception 'A partida não tem adversário no lado B' using errcode = 'NQ009';
+  end if;
+
+  return public.close_match(p_match_id, p_winner, 'reported', v_user);
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Ocupar o lado livre de uma partida ("Adversário livre")
+-- ---------------------------------------------------------------------
+create or replace function public.join_open_side(p_scan_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user  uuid := auth.uid();
+  v_token public.scan_tokens%rowtype;
+  v_match public.matches%rowtype;
+  v_entry public.queue_entries%rowtype;
+begin
+  if v_user is null then
+    raise exception 'Autenticação obrigatória' using errcode = 'NQ001';
+  end if;
+
+  select * into v_token
+  from public.scan_tokens t
+  where t.token_hash = public.hash_scan_token(p_scan_token)
+  for update;
+
+  if not found or v_token.user_id <> v_user
+     or v_token.consumed_at is not null or v_token.expires_at <= now() then
+    raise exception 'Escaneie o QR Code da quadra novamente' using errcode = 'NQ002';
+  end if;
+
+  select * into v_match
+  from public.matches mt
+  where mt.court_id = v_token.court_id and mt.ended_at is null
+  for update;
+
+  if not found then
+    raise exception 'Não há partida em andamento nesta quadra' using errcode = 'NQ017';
+  end if;
+  if v_match.side_b_entry_id is not null then
+    raise exception 'Esta partida já tem os dois lados' using errcode = 'NQ009';
+  end if;
+
+  select e.* into v_entry
+  from public.queue_entry_members m
+  join public.queue_entries e on e.id = m.entry_id
+  where m.user_id = v_user and m.is_active and e.court_id = v_token.court_id
+  for update of e;
+
+  if not found then
+    raise exception 'Entre na fila desta quadra antes' using errcode = 'NQ007';
+  end if;
+  if v_entry.id = v_match.side_a_entry_id then
+    raise exception 'Seu time já está no lado A' using errcode = 'NQ009';
+  end if;
+  if v_entry.mode <> v_match.mode then
+    raise exception 'A partida em andamento é %',
+      case when v_match.mode = 'double' then 'de duplas' else 'de simples' end
+      using errcode = 'NQ009';
+  end if;
+
+  update public.matches set side_b_entry_id = v_entry.id where id = v_match.id;
+
+  update public.queue_entries
+     set status = 'playing', called_at = coalesce(called_at, now()), started_at = now()
+   where id = v_entry.id;
+
+  update public.scan_tokens
+     set consumed_at = now(), consumed_by_entry = v_entry.id
+   where id = v_token.id;
+
+  return public.match_state(v_match.id);
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Chamar o próximo time (abre a janela de check-in)
+-- ---------------------------------------------------------------------
+create or replace function public.call_next_team(p_court_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_court public.courts%rowtype;
+  v_next  uuid;
+begin
+  select * into v_court from public.courts c where c.id = p_court_id;
+  if not found then
+    return null;
+  end if;
+
+  -- Só chama se a quadra estiver livre.
+  if exists (select 1 from public.matches mt
+             where mt.court_id = p_court_id and mt.ended_at is null) then
+    return null;
+  end if;
+
+  select qp.entry_id into v_next
+  from public.queue_positions qp
+  where qp.court_id = p_court_id
+  order by qp.position
+  limit 1;
+
+  if v_next is null then
+    return null;
+  end if;
+
+  update public.queue_entries
+     set status          = 'ready',
+         called_at       = coalesce(called_at, now()),
+         call_expires_at = now() + make_interval(secs => v_court.call_window_seconds)
+   where id = v_next and status = 'waiting';
+
+  return v_next;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Rotina: encerra slot estourado e expira chamada não atendida
+-- ---------------------------------------------------------------------
+create or replace function public.advance_expired_queues()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_match   record;
+  v_entry   record;
+  v_closed  integer := 0;
+  v_expired integer := 0;
+begin
+  -- Slot estourado: encerra sem vencedor e chama o próximo.
+  for v_match in
+    select id from public.matches
+    where ended_at is null and expires_at <= now()
+  loop
+    perform public.close_match(v_match.id, null, 'slot_expired');
+    v_closed := v_closed + 1;
+  end loop;
+
+  -- Chamado e não compareceu: perde a vez, e o próximo é chamado.
+  for v_entry in
+    select e.id, e.court_id
+    from public.queue_entries e
+    where e.status = 'ready'
+      and e.call_expires_at is not null
+      and e.call_expires_at <= now()
+  loop
+    update public.queue_entries
+       set status = 'expired', cancel_reason = 'no_show', left_at = now()
+     where id = v_entry.id;
+
+    perform public.call_next_team(v_entry.court_id);
+    v_expired := v_expired + 1;
+  end loop;
+
+  return jsonb_build_object(
+    'matches_closed', v_closed,
+    'entries_expired', v_expired,
+    'ran_at', now()
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Permissões
+-- ---------------------------------------------------------------------
+revoke all on function public.close_match(uuid, public.match_side, public.match_end_reason, uuid)
+  from public, anon, authenticated;
+revoke all on function public.call_next_team(uuid)       from public, anon, authenticated;
+revoke all on function public.advance_expired_queues()   from public, anon, authenticated;
+
+grant execute on function public.check_in_and_start(text)                       to authenticated;
+grant execute on function public.join_open_side(text)                           to authenticated;
+grant execute on function public.report_match_result(uuid, public.match_side)   to authenticated;
+grant execute on function public.player_state(uuid)                             to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Operação do parque (staff/admin), sobre o mesmo modelo
+--
+-- Um parque público não tem operador — o caminho principal é o check-in
+-- do jogador. Estas ficam para quem administra uma quadra de clube.
+-- ---------------------------------------------------------------------
+create or replace function public.start_match(p_entry_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.is_staff() then
+    raise exception 'Apenas a operação da quadra pode iniciar partidas sem check-in'
+      using errcode = 'NQ008';
+  end if;
+  return public.open_match(p_entry_id);
+end;
+$$;
+
+-- A versão da Sprint 1 tinha um argumento só; mantê-la deixaria a
+-- chamada com um argumento ambígua (42725).
+drop function if exists public.finish_match(uuid);
+
+create or replace function public.finish_match(
+  p_entry_id uuid,
+  p_winner   public.match_side default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_match public.matches%rowtype;
+begin
+  if not public.is_staff() then
+    raise exception 'Apenas a operação da quadra pode encerrar partidas' using errcode = 'NQ008';
+  end if;
+
+  select * into v_match
+  from public.matches mt
+  where mt.ended_at is null
+    and p_entry_id in (mt.side_a_entry_id, mt.side_b_entry_id);
+
+  if not found then
+    raise exception 'Este time não está em quadra' using errcode = 'NQ009';
+  end if;
+
+  return public.close_match(v_match.id, p_winner, 'cancelled', auth.uid());
+end;
+$$;
+
+-- Encerra a partida atual (sem vencedor) e chama o próximo time.
+create or replace function public.call_next(p_court_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_live uuid;
+  v_next uuid;
+begin
+  if not public.is_staff() then
+    raise exception 'Apenas a operação da quadra pode chamar o próximo time' using errcode = 'NQ008';
+  end if;
+
+  select mt.id into v_live
+  from public.matches mt
+  where mt.court_id = p_court_id and mt.ended_at is null;
+
+  if v_live is not null then
+    perform public.close_match(v_live, null, 'cancelled', auth.uid());
+  else
+    v_next := public.call_next_team(p_court_id);
+  end if;
+
+  select qp.entry_id into v_next
+  from public.queue_positions qp
+  where qp.court_id = p_court_id
+  order by qp.position
+  limit 1;
+
+  if v_next is null then
+    return jsonb_build_object('court_id', p_court_id, 'next_entry', null,
+                              'message', 'Não há times na fila');
+  end if;
+
+  return public.queue_entry_state(v_next);
+end;
+$$;
+
+revoke all on function public.open_match(uuid) from public, anon, authenticated;
+
+grant execute on function public.start_match(uuid)                               to authenticated;
+grant execute on function public.finish_match(uuid, public.match_side)           to authenticated;
+grant execute on function public.call_next(uuid)                                 to authenticated;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008130300_profile_and_partners.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 3
+-- 18. Perfil e busca de parceiro
+--
+-- A fila é desenhada como uma pilha de raquetes, uma por time, com as
+-- cores que o jogador escolhe no perfil. Sem isso, a tela principal não
+-- consegue desenhar a pilha.
+-- =====================================================================
+
+alter table public.profiles add column if not exists racket_frame_color text not null default '#C49051';
+alter table public.profiles add column if not exists racket_grip_color  text not null default '#F1ECEF';
+alter table public.profiles add column if not exists avatar_tone        smallint not null default 0;
+
+do $$ begin
+  alter table public.profiles
+    add constraint profiles_racket_colors
+    check (racket_frame_color ~ '^#[0-9A-Fa-f]{6}$' and racket_grip_color ~ '^#[0-9A-Fa-f]{6}$');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table public.profiles
+    add constraint profiles_avatar_tone_range check (avatar_tone between 0 and 2);
+exception when duplicate_object then null; end $$;
+
+comment on column public.profiles.racket_frame_color is 'Cor do aro da raquete na pilha da fila.';
+comment on column public.profiles.racket_grip_color  is 'Cor do grip da raquete na pilha da fila.';
+comment on column public.profiles.avatar_tone        is 'Índice do tom de fundo do avatar (0-2).';
+
+-- Paleta do protótipo. Fica no banco para o app e o backend não
+-- divergirem, e para a validação recusar cor fora do conjunto.
+create table if not exists public.racket_palette (
+  color       text primary key check (color ~ '^#[0-9A-Fa-f]{6}$'),
+  name        text not null,
+  for_frame   boolean not null default true,
+  for_grip    boolean not null default true,
+  sort_order  smallint not null default 0
+);
+
+insert into public.racket_palette (color, name, sort_order) values
+  ('#C49051', 'Ocre',        1),
+  ('#F1ECEF', 'Giz',         2),
+  ('#B13F16', 'Ferrugem',    3),
+  ('#6D9CB7', 'Azul névoa',  4),
+  ('#D0C0C9', 'Malva',       5),
+  ('#74B69D', 'Sálvia',      6)
+on conflict (color) do update set name = excluded.name, sort_order = excluded.sort_order;
+
+-- ---------------------------------------------------------------------
+-- Atualizar o próprio perfil
+-- ---------------------------------------------------------------------
+create or replace function public.update_my_profile(
+  p_full_name   text default null,
+  p_frame_color text default null,
+  p_grip_color  text default null,
+  p_avatar_tone smallint default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user uuid := auth.uid();
+  v_row  public.profiles%rowtype;
+begin
+  if v_user is null then
+    raise exception 'Autenticação obrigatória' using errcode = 'NQ001';
+  end if;
+
+  if p_frame_color is not null
+     and not exists (select 1 from public.racket_palette rp
+                     where rp.color = upper(p_frame_color) and rp.for_frame) then
+    raise exception 'Cor de aro fora da paleta: %', p_frame_color using errcode = 'NQ019';
+  end if;
+
+  if p_grip_color is not null
+     and not exists (select 1 from public.racket_palette rp
+                     where rp.color = upper(p_grip_color) and rp.for_grip) then
+    raise exception 'Cor de grip fora da paleta: %', p_grip_color using errcode = 'NQ019';
+  end if;
+
+  update public.profiles p
+     set full_name          = coalesce(nullif(trim(p_full_name), ''), p.full_name),
+         racket_frame_color = coalesce(upper(p_frame_color), p.racket_frame_color),
+         racket_grip_color  = coalesce(upper(p_grip_color), p.racket_grip_color),
+         avatar_tone        = coalesce(p_avatar_tone, p.avatar_tone)
+   where p.id = v_user
+  returning * into v_row;
+
+  return jsonb_build_object(
+    'user_id',            v_row.id,
+    'username',           v_row.username,
+    'full_name',          v_row.full_name,
+    'initials',           public.initials_of(v_row.full_name),
+    'avatar_tone',        v_row.avatar_tone,
+    'racket_frame_color', v_row.racket_frame_color,
+    'racket_grip_color',  v_row.racket_grip_color
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Buscar parceiro, com disponibilidade
+--
+-- O protótipo mostra cada candidato como "Disponível · @handle" ou
+-- "Na fila · Quadra 04 — indisponível", e bloqueia a seleção. A
+-- disponibilidade vem junto para a tela não fazer N consultas.
+-- ---------------------------------------------------------------------
+create or replace function public.search_partners(
+  p_query text default null,
+  p_limit integer default 20
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with needle as (
+    select regexp_replace(lower(trim(coalesce(p_query, ''))), '^@', '') as q
+  )
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'user_id',            s.id,
+        'username',           s.username,
+        'handle',             '@' || s.username,
+        'full_name',          s.full_name,
+        'initials',           public.initials_of(coalesce(s.full_name, s.username::text)),
+        'avatar_tone',        s.avatar_tone,
+        'racket_frame_color', s.racket_frame_color,
+        'racket_grip_color',  s.racket_grip_color,
+        'state',              s.st ->> 'state',
+        'available',          (s.st ->> 'state') = 'free',
+        'where',              s.st ->> 'where'
+      )
+      order by (s.st ->> 'state') = 'free' desc, s.full_name, s.username
+    ),
+    '[]'::jsonb
+  )
+  from (
+    select p.id, p.username, p.full_name, p.avatar_tone,
+           p.racket_frame_color, p.racket_grip_color,
+           public.player_state(p.id) as st
+    from public.profiles p, needle n
+    where p.id <> auth.uid()
+      and p.role = 'player'
+      and (
+        n.q = ''
+        or p.username ilike '%' || n.q || '%'
+        or p.full_name ilike '%' || n.q || '%'
+      )
+    order by p.full_name, p.username
+    limit least(greatest(coalesce(p_limit, 20), 1), 50)
+  ) s;
+$$;
+
+comment on function public.search_partners(text, integer) is
+  'Candidatos a parceiro de dupla, com disponibilidade (free/queued/playing).';
+
+-- ---------------------------------------------------------------------
+-- Permissões
+-- ---------------------------------------------------------------------
+alter table public.racket_palette enable row level security;
+
+drop policy if exists "paleta: leitura pública" on public.racket_palette;
+create policy "paleta: leitura pública"
+  on public.racket_palette for select
+  to anon, authenticated
+  using (true);
+
+revoke all on public.racket_palette from anon, authenticated;
+grant select on public.racket_palette to anon, authenticated;
+
+grant execute on function public.update_my_profile(text, text, text, smallint) to authenticated;
+grant execute on function public.search_partners(text, integer)                to authenticated;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008130400_screens.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 3
+-- 19. Leituras das telas do protótipo
+--
+-- Uma RPC por tela, para cada uma resolver com uma chamada só — o
+-- critério de 2s no 3G não sobrevive a cinco round-trips.
+--
+--   parks_overview   -> lista de parques
+--   park_screen      -> home do parque (resumo + quadras)
+--   court_screen     -> tela da quadra (placar + fila em pilha)
+--   match_state      -> placar de uma partida
+--   my_queue_state   -> o cartão "você está na fila" / chamada
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- A view de posições volta a contar "existe partida ao vivo" como UM
+-- time à frente. Antes contava entradas com status 'playing' — e agora
+-- uma partida tem dois lados, o que faria o próximo da fila achar que
+-- tem dois times na frente.
+-- ---------------------------------------------------------------------
+drop view if exists public.queue_positions;
+
+create view public.queue_positions
+with (security_invoker = true) as
+select
+  e.id        as entry_id,
+  e.court_id,
+  e.mode,
+  e.status,
+  e.joined_at,
+  e.queue_number,
+  row_number() over (partition by e.court_id order by e.queue_number) as position,
+  (
+    select count(*)
+    from public.matches mt
+    where mt.court_id = e.court_id and mt.ended_at is null
+  ) as playing_count
+from public.queue_entries e
+where e.status in ('waiting', 'ready');
+
+comment on view public.queue_positions is
+  'Posição de cada time aguardando, por ordem de chegada. '
+  'playing_count é 0 ou 1: a partida em andamento conta como um time à frente.';
+
+grant select on public.queue_positions to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Placar de uma partida
+-- ---------------------------------------------------------------------
+create or replace function public.match_state(p_match_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_match public.matches%rowtype;
+  v_court public.courts%rowtype;
+  v_a     jsonb;
+  v_b     jsonb;
+begin
+  select * into v_match from public.matches mt where mt.id = p_match_id;
+  if not found then
+    raise exception 'Partida não encontrada' using errcode = 'NQ018';
+  end if;
+
+  select * into v_court from public.courts c where c.id = v_match.court_id;
+
+  v_a := public.match_side_players(v_match.side_a_entry_id);
+  v_b := case
+           when v_match.side_b_entry_id is null then '[]'::jsonb
+           else public.match_side_players(v_match.side_b_entry_id)
+         end;
+
+  return jsonb_build_object(
+    'match_id',     v_match.id,
+    'court_id',     v_match.court_id,
+    'court_name',   public.court_label(v_court.court_number),
+    'mode',         v_match.mode,
+    'slot_minutes', v_match.slot_minutes,
+    'started_at',   v_match.started_at,
+    'expires_at',   v_match.expires_at,
+    'ended_at',     v_match.ended_at,
+    'winner_side',  v_match.winner_side,
+    'end_reason',   v_match.end_reason,
+    'is_live',      v_match.ended_at is null,
+    'elapsed_seconds',   greatest(0, floor(extract(epoch from (
+                           coalesce(v_match.ended_at, now()) - v_match.started_at)))::integer),
+    'remaining_seconds', case
+                           when v_match.ended_at is not null then 0
+                           else greatest(0, floor(extract(epoch from (
+                             v_match.expires_at - now())))::integer)
+                         end,
+    'side_a', jsonb_build_object(
+      'entry_id', v_match.side_a_entry_id,
+      'role',     'challenger',
+      'players',  v_a
+    ),
+    'side_b', jsonb_build_object(
+      'entry_id', v_match.side_b_entry_id,
+      'role',     'holder',
+      'open',     v_match.side_b_entry_id is null,
+      'players',  v_b
+    )
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- A fila como pilha de raquetes
+--
+-- Cada item traz as raquetes dos times à frente (no máximo 5, como no
+-- protótipo, mais a contagem do que sobra) e a cor da própria.
+-- ---------------------------------------------------------------------
+create or replace function public.court_queue_items(p_court_id uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with court as (
+    select c.id, c.slot_minutes,
+           (select count(*) from public.matches mt
+             where mt.court_id = c.id and mt.ended_at is null) as live,
+           (select greatest(0, floor(extract(epoch from (mt.expires_at - now())))::integer)
+              from public.matches mt
+             where mt.court_id = c.id and mt.ended_at is null
+             limit 1) as remaining
+    from public.courts c where c.id = p_court_id
+  ),
+  q as (
+    select qp.entry_id, qp.position, qp.mode, qp.status, qp.joined_at,
+           e.call_expires_at,
+           -- A raquete do time é a do dono da inscrição.
+           (select jsonb_build_object(
+                     'frame', pr.racket_frame_color,
+                     'grip',  pr.racket_grip_color)
+              from public.queue_entry_members mm
+              join public.profiles pr on pr.id = mm.user_id
+             where mm.entry_id = qp.entry_id and mm.role = 'owner'
+             limit 1) as racket,
+           public.match_side_players(qp.entry_id) as players
+    from public.queue_positions qp
+    join public.queue_entries e on e.id = qp.entry_id
+    where qp.court_id = p_court_id
+  )
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'entry_id',    q.entry_id,
+        'position',    q.position,
+        'position_label', q.position || 'º',
+        'mode',        q.mode,
+        'mode_label',  case when q.mode = 'double' then 'Duplas 2x2' else 'Simples 1x1' end,
+        'status',      q.status,
+        'is_called',   q.status = 'ready',
+        'call_expires_at', q.call_expires_at,
+        'joined_at',   q.joined_at,
+        'teams_ahead', (q.position - 1) + (select live from court),
+        'is_mine',     exists (
+                         select 1 from public.queue_entry_members mm
+                         where mm.entry_id = q.entry_id and mm.user_id = auth.uid()
+                       ),
+        'racket',      q.racket,
+        'players',     q.players,
+        'team_label',  (
+          select string_agg(pl ->> 'short_name', ' + ' order by ord)
+          from jsonb_array_elements(q.players) with ordinality as t(pl, ord)
+        ),
+        -- Raquetes à frente, no máximo 5, mais quantas sobraram atrás.
+        'stack', (
+          select coalesce(jsonb_agg(s.racket order by s.position), '[]'::jsonb)
+          from (
+            select q2.racket, q2.position
+            from q q2
+            where q2.position <= q.position
+            order by q2.position desc
+            limit 5
+          ) s
+        ),
+        'stack_more', greatest(q.position - 5, 0),
+        'eta_seconds', (select remaining from court) + (q.position - 1) * (select slot_minutes from court) * 60
+      )
+      order by q.position
+    ),
+    '[]'::jsonb
+  )
+  from q;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Tela da quadra
+-- ---------------------------------------------------------------------
+create or replace function public.court_screen(p_court_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_court  public.courts%rowtype;
+  v_park   public.parks%rowtype;
+  v_match  uuid;
+  v_items  jsonb;
+  v_queue  integer;
+  v_rem    integer := 0;
+  v_mine   jsonb;
+begin
+  select * into v_court from public.courts c where c.id = p_court_id;
+  if not found then
+    raise exception 'Quadra não encontrada' using errcode = 'NQ003';
+  end if;
+
+  select * into v_park from public.parks pk where pk.id = v_court.park_id;
+
+  select mt.id,
+         greatest(0, floor(extract(epoch from (mt.expires_at - now())))::integer)
+  into v_match, v_rem
+  from public.matches mt
+  where mt.court_id = p_court_id and mt.ended_at is null
+  limit 1;
+
+  v_items := public.court_queue_items(p_court_id);
+  v_queue := jsonb_array_length(v_items);
+
+  select i into v_mine
+  from jsonb_array_elements(v_items) i
+  where (i ->> 'is_mine')::boolean
+  limit 1;
+
+  return jsonb_build_object(
+    'court', jsonb_build_object(
+      'id',            v_court.id,
+      'name',          public.court_label(v_court.court_number),
+      'number',        v_court.court_number,
+      'surface',       v_court.surface,
+      'surface_label', case v_court.surface
+                         when 'clay'  then 'Saibro'
+                         when 'hard'  then 'Rápida'
+                         else 'Grama'
+                       end,
+      'status',        v_court.status,
+      'is_active',     v_court.is_active,
+      'slot_minutes',  v_court.slot_minutes,
+      'call_window_seconds', v_court.call_window_seconds,
+      'checkin_methods', (
+        select coalesce(jsonb_agg(m order by m), '[]'::jsonb)
+        from (
+          select 'qr'::text as m where v_court.has_qr_code
+          union all
+          select 'nfc'::text where v_court.has_nfc_tag
+        ) s
+      ),
+      'latitude',      v_court.latitude,
+      'longitude',     v_court.longitude,
+      'rating_avg',    v_court.rating_avg,
+      'rating_count',  v_court.rating_count,
+      'cover_photo_path', v_court.cover_photo_path
+    ),
+    'park', jsonb_build_object(
+      'id',       v_park.id,
+      'name',     v_park.name,
+      'district', v_park.district
+    ),
+    'match',        case when v_match is null then null else public.match_state(v_match) end,
+    'is_live',      v_match is not null,
+    'status_text',  case when v_match is not null then 'Em jogo' else 'Livre' end,
+    'players_line', case
+                      when v_match is null then 'Sem jogo agora — check-in libera a quadra'
+                      else (
+                        select coalesce(string_agg(side, ' × '), '')
+                        from (
+                          select (
+                            select coalesce(string_agg(pl ->> 'short_name', ' / ' order by ord), 'Adversário livre')
+                            from jsonb_array_elements(
+                              public.match_state(v_match) -> s.key -> 'players'
+                            ) with ordinality as t(pl, ord)
+                          ) as side
+                          from (values ('side_a', 1), ('side_b', 2)) as s(key, ord)
+                          order by s.ord
+                        ) sides
+                      )
+                    end,
+    'queue',        v_items,
+    'queue_length', v_queue,
+    'queue_text',   case
+                      when v_queue = 0 then 'Fila vazia'
+                      else v_queue || ' na espera'
+                    end,
+    'remaining_seconds', coalesce(v_rem, 0),
+    'total_wait_seconds', coalesce(v_rem, 0) + v_queue * v_court.slot_minutes * 60,
+    'next_position_label', (v_queue + 1) || 'º',
+    'my_entry',     v_mine,
+    -- A quadra aceita entradas (fato da quadra)
+    'court_accepting', v_court.is_active and v_court.status <> 'unavailable',
+    -- Eu posso entrar agora (fato do jogador: uma fila por pessoa)
+    'can_join',     v_court.is_active
+                    and v_court.status <> 'unavailable'
+                    and (public.player_state(auth.uid()) ->> 'state') = 'free',
+    'my_state',     public.player_state(auth.uid()),
+    'generated_at', now()
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Home do parque
+-- ---------------------------------------------------------------------
+create or replace function public.park_screen(p_park_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_park   public.parks%rowtype;
+  v_courts jsonb;
+begin
+  select * into v_park from public.parks pk where pk.id = p_park_id;
+  if not found then
+    raise exception 'Parque não encontrado' using errcode = 'NQ020';
+  end if;
+
+  select coalesce(jsonb_agg(s.screen order by s.court_number), '[]'::jsonb)
+  into v_courts
+  from (
+    select c.court_number, public.court_screen(c.id) as screen
+    from public.courts c
+    where c.park_id = p_park_id and c.is_active
+  ) s;
+
+  return jsonb_build_object(
+    'park', jsonb_build_object(
+      'id',         v_park.id,
+      'slug',       v_park.slug,
+      'name',       v_park.name,
+      'district',   v_park.district,
+      'photo_url',  v_park.photo_url,
+      'photo_alt',  v_park.photo_alt,
+      'tone_color', v_park.tone_color,
+      'latitude',   v_park.latitude,
+      'longitude',  v_park.longitude
+    ),
+    'summary', jsonb_build_object(
+      'courts', jsonb_array_length(v_courts),
+      'live',   (select count(*) from jsonb_array_elements(v_courts) c
+                  where (c -> 'is_live')::boolean),
+      'queued', (select coalesce(sum((c ->> 'queue_length')::integer), 0)
+                   from jsonb_array_elements(v_courts) c)
+    ),
+    'courts',   v_courts,
+    'my_state', public.player_state(auth.uid()),
+    'generated_at', now()
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Lista de parques
+-- ---------------------------------------------------------------------
+create or replace function public.parks_overview(
+  p_latitude      double precision default null,
+  p_longitude     double precision default null,
+  p_radius_meters double precision default null,
+  p_limit         integer default 50
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with my as (
+    select public.player_state(auth.uid()) as st
+  )
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'park_id',    s.id,
+        'slug',       s.slug,
+        'name',       s.name,
+        'district',   s.district,
+        'photo_url',  s.photo_url,
+        'photo_alt',  s.photo_alt,
+        'tone_color', s.tone_color,
+        'latitude',   s.latitude,
+        'longitude',  s.longitude,
+        'distance_meters', s.distance_meters,
+        'courts_count', s.courts_count,
+        'live_count',   s.live_count,
+        'queue_count',  s.queue_count,
+        'any_live',     s.live_count > 0,
+        'live_text',    case
+                          when s.live_count = 0 then 'Quadras livres'
+                          when s.live_count = 1 then 'Ao vivo · 1 jogo'
+                          else 'Ao vivo · ' || s.live_count || ' jogos'
+                        end,
+        'surfaces',     s.surfaces,
+        'is_mine',      s.is_mine
+      )
+      order by coalesce(s.distance_meters, 0), s.name
+    ),
+    '[]'::jsonb
+  )
+  from (
+    select
+      pk.id, pk.slug, pk.name, pk.district, pk.photo_url, pk.photo_alt,
+      pk.tone_color, pk.latitude, pk.longitude,
+      case
+        when p_latitude is null or p_longitude is null then null
+        else public.haversine_meters(p_latitude, p_longitude, pk.latitude, pk.longitude)
+      end as distance_meters,
+      (select count(*)::integer from public.courts c
+        where c.park_id = pk.id and c.is_active) as courts_count,
+      (select count(*)::integer from public.courts c
+         join public.matches mt on mt.court_id = c.id and mt.ended_at is null
+        where c.park_id = pk.id and c.is_active) as live_count,
+      (select count(*)::integer from public.courts c
+         join public.queue_entries e on e.court_id = c.id
+        where c.park_id = pk.id and c.is_active
+          and e.status in ('waiting', 'ready')) as queue_count,
+      (select coalesce(jsonb_agg(distinct jsonb_build_object(
+                 'surface', c.surface,
+                 'label', case c.surface
+                            when 'clay' then 'Saibro'
+                            when 'hard' then 'Rápida'
+                            else 'Grama'
+                          end)), '[]'::jsonb)
+         from public.courts c where c.park_id = pk.id and c.is_active) as surfaces,
+      coalesce(((select st from my) ->> 'park_id') = pk.id::text, false) as is_mine
+    from public.parks pk
+    where pk.is_active
+      and (
+        p_latitude is null or p_longitude is null or p_radius_meters is null
+        or public.haversine_meters(p_latitude, p_longitude, pk.latitude, pk.longitude) <= p_radius_meters
+      )
+    limit least(greatest(coalesce(p_limit, 50), 1), 200)
+  ) s;
+$$;
+
+-- ---------------------------------------------------------------------
+-- O cartão "você está na fila" e a chamada
+-- ---------------------------------------------------------------------
+create or replace function public.my_queue_state()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_user   uuid := auth.uid();
+  v_entry  public.queue_entries%rowtype;
+  v_court  public.courts%rowtype;
+  v_park   public.parks%rowtype;
+  v_item   jsonb;
+  v_match  uuid;
+begin
+  if v_user is null then
+    return jsonb_build_object('state', 'free');
+  end if;
+
+  select e.* into v_entry
+  from public.queue_entry_members m
+  join public.queue_entries e on e.id = m.entry_id
+  where m.user_id = v_user and m.is_active
+  limit 1;
+
+  if not found then
+    return jsonb_build_object('state', 'free');
+  end if;
+
+  select * into v_court from public.courts c where c.id = v_entry.court_id;
+  select * into v_park  from public.parks pk where pk.id = v_court.park_id;
+
+  select i into v_item
+  from jsonb_array_elements(public.court_queue_items(v_entry.court_id)) i
+  where (i ->> 'entry_id')::uuid = v_entry.id;
+
+  select mt.id into v_match
+  from public.matches mt
+  where mt.court_id = v_entry.court_id
+    and mt.ended_at is null
+    and v_entry.id in (mt.side_a_entry_id, mt.side_b_entry_id);
+
+  return jsonb_build_object(
+    'state',      case
+                    when v_entry.status = 'playing' then 'playing'
+                    when v_entry.status = 'ready'   then 'called'
+                    else 'queued'
+                  end,
+    'entry_id',   v_entry.id,
+    'mode',       v_entry.mode,
+    'court_id',   v_court.id,
+    'court_name', public.court_label(v_court.court_number),
+    'park_id',    v_park.id,
+    'park_name',  v_park.name,
+    'position',        (v_item ->> 'position')::integer,
+    'position_label',  v_item ->> 'position_label',
+    'teams_ahead',     (v_item ->> 'teams_ahead')::integer,
+    'eta_seconds',     (v_item ->> 'eta_seconds')::integer,
+    'stack',           v_item -> 'stack',
+    'stack_more',      (v_item ->> 'stack_more')::integer,
+    'players',         public.match_side_players(v_entry.id),
+    -- Chamado: quanto resta para fazer o check-in
+    'call_expires_at',      v_entry.call_expires_at,
+    'call_remaining_seconds', case
+                                when v_entry.status <> 'ready' or v_entry.call_expires_at is null then null
+                                else greatest(0, floor(extract(epoch from
+                                       (v_entry.call_expires_at - now())))::integer)
+                              end,
+    'match',      case when v_match is null then null else public.match_state(v_match) end,
+    'generated_at', now()
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Notificações: a chamada é o gatilho de "É a sua vez!"
+-- ---------------------------------------------------------------------
+create or replace function public.refresh_queue_notifications(p_court_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_court    public.courts%rowtype;
+  v_row      record;
+  v_ahead    integer;
+  v_inserted integer;
+  v_label    text;
+begin
+  select * into v_court from public.courts c where c.id = p_court_id;
+  if not found then
+    return;
+  end if;
+
+  v_label := public.court_label(v_court.court_number);
+
+  for v_row in
+    select qp.entry_id, qp.position, qp.playing_count, qp.status, e.ready_notified_at
+    from public.queue_positions qp
+    join public.queue_entries e on e.id = qp.entry_id
+    where qp.court_id = p_court_id and qp.position <= 2
+  loop
+    v_ahead := (v_row.position - 1) + v_row.playing_count;
+
+    -- Chamado: é a vez, e o check-in tem prazo.
+    if v_row.status = 'ready' then
+      perform public.enqueue_team_notification(
+        v_row.entry_id,
+        'queue_turn',
+        'É a sua vez!',
+        format('Faça o check-in na %s em até %s minutos.',
+               v_label, greatest(1, v_court.call_window_seconds / 60)),
+        jsonb_build_object('court_id', p_court_id, 'entry_id', v_row.entry_id, 'teams_ahead', 0)
+      );
+    elsif v_ahead = 1 then
+      v_inserted := public.enqueue_team_notification(
+        v_row.entry_id,
+        'queue_almost_ready',
+        'Prepare-se!',
+        format('Falta 1 time para a sua vez na %s.', v_label),
+        jsonb_build_object('court_id', p_court_id, 'entry_id', v_row.entry_id, 'teams_ahead', 1)
+      );
+
+      if v_inserted > 0 and v_row.ready_notified_at is null then
+        update public.queue_entries set ready_notified_at = now() where id = v_row.entry_id;
+      end if;
+    end if;
+  end loop;
+end;
+$$;
+
+-- A chamada e o fim da partida também mexem na fila.
+drop trigger if exists matches_notify on public.matches;
+create trigger matches_notify
+  after insert or update of ended_at or delete on public.matches
+  for each row execute function public.queue_entries_notify_trigger();
+
+-- ---------------------------------------------------------------------
+-- Manutenção passa a avançar as filas
+-- ---------------------------------------------------------------------
+create or replace function public.run_maintenance()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_expired   integer;
+  v_purged    integer;
+  v_snapshots integer;
+  v_advanced  jsonb;
+begin
+  v_advanced  := public.advance_expired_queues();
+  v_expired   := public.expire_stale_queue_entries();
+  v_purged    := public.purge_expired_scan_tokens();
+  v_snapshots := public.capture_occupancy_snapshots();
+
+  delete from public.notification_outbox
+  where status in ('sent', 'failed') and created_at < now() - interval '30 days';
+
+  delete from public.court_occupancy_snapshots
+  where captured_at < now() - interval '90 days';
+
+  return jsonb_build_object(
+    'matches_closed',     v_advanced -> 'matches_closed',
+    'calls_expired',      v_advanced -> 'entries_expired',
+    'expired_entries',    v_expired,
+    'purged_scan_tokens', v_purged,
+    'occupancy_snapshots', v_snapshots,
+    'ran_at', now()
+  );
+end;
+$$;
+
+revoke all on function public.run_maintenance() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- Permissões das leituras
+-- ---------------------------------------------------------------------
+grant execute on function public.match_state(uuid)            to anon, authenticated;
+grant execute on function public.court_queue_items(uuid)      to anon, authenticated;
+grant execute on function public.court_screen(uuid)           to anon, authenticated;
+grant execute on function public.park_screen(uuid)            to anon, authenticated;
+grant execute on function public.my_queue_state()             to authenticated;
+grant execute on function public.parks_overview(double precision, double precision, double precision, integer)
+  to anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- court_queue: mantida para quem já consome (Edge Function queue-status
+-- e o app da Sprint 1), agora lendo a partida da tabela matches. Sem
+-- isso ela reportaria "Livre" com os dois lados em quadra.
+--
+-- Telas novas devem usar court_screen, que traz placar, pilha e parque.
+-- ---------------------------------------------------------------------
+create or replace function public.court_queue(p_court_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_screen jsonb;
+begin
+  v_screen := public.court_screen(p_court_id);
+
+  return jsonb_build_object(
+    'court', jsonb_build_object(
+      'id',                    v_screen -> 'court' -> 'id',
+      'slug',                  (select c.slug from public.courts c where c.id = p_court_id),
+      'name',                  v_screen -> 'court' -> 'name',
+      'address',               (select c.address from public.courts c where c.id = p_court_id),
+      'status',                v_screen -> 'court' -> 'status',
+      'is_active',             v_screen -> 'court' -> 'is_active',
+      'latitude',              v_screen -> 'court' -> 'latitude',
+      'longitude',             v_screen -> 'court' -> 'longitude',
+      'average_match_minutes', v_screen -> 'court' -> 'slot_minutes',
+      'photo_url',             (select c.photo_url from public.courts c where c.id = p_court_id)
+    ),
+    'can_join',      v_screen -> 'court_accepting',
+    'teams_waiting', v_screen -> 'queue_length',
+    'current_match', case
+                       when (v_screen ->> 'is_live')::boolean then jsonb_build_object(
+                         'entry_id',   v_screen -> 'match' -> 'side_a' -> 'entry_id',
+                         'mode',       v_screen -> 'match' -> 'mode',
+                         'started_at', v_screen -> 'match' -> 'started_at',
+                         'players',    v_screen -> 'match' -> 'side_a' -> 'players'
+                       )
+                       else null
+                     end,
+    'current_match_remaining_minutes', case
+                                         when (v_screen ->> 'is_live')::boolean
+                                           then ceil((v_screen ->> 'remaining_seconds')::numeric / 60)::integer
+                                         else null
+                                       end,
+    'queue', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+               'entry_id',               i -> 'entry_id',
+               'mode',                   i -> 'mode',
+               'status',                 i -> 'status',
+               'joined_at',              i -> 'joined_at',
+               'position',               i -> 'position',
+               'teams_ahead',            i -> 'teams_ahead',
+               'estimated_wait_minutes', ceil((i ->> 'eta_seconds')::numeric / 60)::integer,
+               'players',                i -> 'players'
+             ) order by (i ->> 'position')::integer), '[]'::jsonb)
+      from jsonb_array_elements(v_screen -> 'queue') i
+    ),
+    'generated_at', v_screen -> 'generated_at'
+  );
+end;
+$$;
+
+grant execute on function public.court_queue(uuid) to anon, authenticated;
+
+
+-- ####################################################################
+-- Origem: supabase/migrations/20261008130500_nfc.sql
+-- ####################################################################
+
+-- =====================================================================
+-- NEQST — Sprint 3
+-- 20. Check-in por NFC, ao lado do QR Code
+--
+-- O protótipo oferece as duas formas na mesma tela: "Aponte para o QR"
+-- e "Aproxime do totem". A tag NFC grava exatamente a mesma URL
+-- assinada do QR (registro NDEF do tipo URI), então a validação é a
+-- mesma — o que muda é só por onde o payload chegou.
+--
+-- Guardar o método serve para operação: se um totem for arrancado ou
+-- clonado, dá para ver por onde vieram os check-ins daquela quadra.
+-- =====================================================================
+
+do $$ begin
+  create type public.scan_method as enum ('qr', 'nfc');
+exception when duplicate_object then null; end $$;
+
+alter table public.scan_tokens add column if not exists method public.scan_method;
+
+update public.scan_tokens set method = 'qr' where method is null;
+
+alter table public.scan_tokens alter column method set default 'qr';
+alter table public.scan_tokens alter column method set not null;
+
+comment on column public.scan_tokens.method is
+  'Por onde o payload chegou: QR Code impresso ou tag NFC.';
+
+create index if not exists scan_tokens_method_idx
+  on public.scan_tokens (court_id, method, created_at desc);
+
+-- Quais métodos cada quadra oferece — a tela esconde a aba que não
+-- existe naquela quadra em vez de oferecer um totem inexistente.
+alter table public.courts add column if not exists has_qr_code boolean not null default true;
+alter table public.courts add column if not exists has_nfc_tag boolean not null default false;
+
+comment on column public.courts.has_nfc_tag is
+  'Se existe totem NFC instalado nesta quadra.';
+
+do $$ begin
+  alter table public.courts
+    add constraint courts_needs_one_checkin_method
+    check (has_qr_code or has_nfc_tag);
+exception when duplicate_object then null; end $$;
+
+-- ---------------------------------------------------------------------
+-- Uso dos métodos por quadra (operação)
+-- ---------------------------------------------------------------------
+create or replace function public.court_checkin_methods(p_court_id uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'court_id', c.id,
+    'qr',  jsonb_build_object(
+      'available', c.has_qr_code,
+      'scans_7d', (select count(*) from public.scan_tokens t
+                    where t.court_id = c.id and t.method = 'qr'
+                      and t.created_at > now() - interval '7 days')
+    ),
+    'nfc', jsonb_build_object(
+      'available', c.has_nfc_tag,
+      'scans_7d', (select count(*) from public.scan_tokens t
+                    where t.court_id = c.id and t.method = 'nfc'
+                      and t.created_at > now() - interval '7 days')
+    )
+  )
+  from public.courts c
+  where c.id = p_court_id;
+$$;
+
+grant execute on function public.court_checkin_methods(uuid) to authenticated;

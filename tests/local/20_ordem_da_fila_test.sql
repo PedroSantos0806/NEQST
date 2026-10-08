@@ -14,9 +14,13 @@ insert into auth.users (id, email) values
   ('aaaa1111-0000-0000-0000-000000000002', 'p2@example.com'),
   ('aaaa1111-0000-0000-0000-000000000003', 'p3@example.com');
 
-insert into public.courts (id, slug, name, latitude, longitude)
-values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'quadra-ordem', 'Quadra Ordem',
+insert into public.parks (id, slug, name, latitude, longitude)
+values ('8f8f8f8f-0000-0000-0000-00000000f00e', 'parque-ordem', 'Parque Ordem',
         -23.561414, -46.655881);
+
+insert into public.courts (id, park_id, court_number, surface, slug, name, latitude, longitude)
+values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '8f8f8f8f-0000-0000-0000-00000000f00e',
+        1, 'clay', 'quadra-ordem', 'Quadra Ordem', -23.561414, -46.655881);
 
 create or replace function pg_temp.join_as(p_user uuid, p_token text)
 returns jsonb language plpgsql as $$

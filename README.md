@@ -8,6 +8,9 @@ Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
   tempo real.
 - [Sprint 2](docs/sprint2.md) — histórico do usuário, avaliação da
   quadra, upload de fotos com moderação e mapa de calor cheio/vazio.
+- [Sprint 3](docs/sprint3.md) — alinhamento com o protótipo de tela:
+  parques acima das quadras, partida lado A × lado B com "quem ganha
+  fica", check-in do próprio jogador (QR ou NFC) e uma fila por jogador.
 
 O que difere entre web e app (push, QR Code, CORS, login) está em
 [docs/plataformas.md](docs/plataformas.md).
@@ -48,7 +51,7 @@ supabase db reset            # aplica migrations + seed
 supabase functions serve --env-file .env
 
 # 5. Testes
-scripts/test-sql.sh                             # migrations + fila + Sprint 2
+scripts/test-sql.sh                             # migrations + as 4 suítes
 deno test --allow-env supabase/functions/_shared/  # geo, QR, web push, CORS
 ```
 
@@ -91,7 +94,7 @@ Passo a passo completo (SSO Google/Apple, pg_cron, QR Codes impressos):
 | `supabase/functions/` | Edge Functions em Deno (API HTTP) |
 | `supabase/functions/_shared/` | Haversine, assinatura de QR, scan tokens, Expo Push, tipos |
 | `supabase/seed.sql` | Quadras de exemplo para dev/staging |
-| `tests/local/` | Testes funcionais em SQL (fila, ordem, Sprint 2) |
+| `tests/local/` | Testes funcionais em SQL (fila, ordem, Sprint 2, Sprint 3) |
 | `scripts/` | Runner de testes, geradores de QR e de chaves VAPID, build do full_setup |
 | `docs/` | Arquitetura, API, banco, deploy, QR Codes, plataformas |
 | `docs/app-links/` | Modelos de `assetlinks.json` e `apple-app-site-association` |
@@ -110,6 +113,8 @@ Passo a passo completo (SSO Google/Apple, pg_cron, QR Codes impressos):
 | `/functions/v1/dispatch-notifications` | POST | cron | US-03 |
 | `/functions/v1/register-web-push` | GET / POST / DELETE | jogador (web) | Sprint 2 |
 | `/functions/v1/court-photo` | GET / POST | jogador | Sprint 2 |
+| `/functions/v1/check-in` | POST | jogador | Sprint 3 |
+| `/functions/v1/match` | GET / POST | jogador | Sprint 3 |
 
 Contratos, exemplos de request/response e códigos de erro:
 [`docs/api.md`](docs/api.md).
@@ -141,6 +146,13 @@ sem passar pelas Edge Functions — ver [`docs/api.md`](docs/api.md#rpc-direto).
 - **Fotos moderadas.** Upload direto para o Storage por URL assinada
   (sem passar pela função, o que importa no 3G), bucket privado e
   aprovação obrigatória antes de aparecer no app.
+- **Quem ganha fica, e quem joga é quem decide.** A partida tem dois
+  lados; o vencedor segue em quadra e o próximo da fila entra como
+  desafiante. Num parque público não há operador: quem foi chamado faz
+  check-in na quadra (QR ou NFC) para liberar o placar, e tem 5 minutos
+  para isso.
+- **Uma fila por jogador.** Em todo o app, não por quadra — vale para o
+  parceiro de dupla também.
 
 ## Escopo
 
@@ -153,6 +165,11 @@ aqui (CI, ambientes, `.env`, README) está em `.github/workflows/ci.yml` e
 **Sprint 2:** histórico do usuário, avaliação da quadra, upload de fotos
 e mapa de calor — mais o que a publicação na web exige do backend
 ([`docs/plataformas.md`](docs/plataformas.md)).
+
+**Sprint 3:** o modelo que o protótipo de frontend mostrou — parques,
+superfícies, partida com dois lados, check-in do jogador, chamada com
+prazo, slot rígido, NFC e a pilha de raquetes
+([`docs/sprint3.md`](docs/sprint3.md)). Uma RPC por tela.
 
 Sugestões que ficaram registradas para depois, em
 [`docs/sprint2.md`](docs/sprint2.md#o-que-não-entrou): rate limiting no

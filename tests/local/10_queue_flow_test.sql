@@ -17,9 +17,15 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('33333333-3333-3333-3333-333333333333', 'caio@example.com',  '{"full_name":"Caio Melo"}'),
   ('44444444-4444-4444-4444-444444444444', 'staff@example.com', '{"full_name":"Operador"}');
 
-insert into public.courts (id, slug, name, latitude, longitude, average_match_minutes)
-values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'quadra-teste', 'Quadra Teste',
-        -23.561414, -46.655881, 20);
+insert into public.parks (id, slug, name, district, latitude, longitude)
+values ('9f9f9f9f-0000-0000-0000-00000000f00d', 'parque-de-teste', 'Parque de Teste',
+        'Centro', -23.561414, -46.655881)
+on conflict (slug) do nothing;
+
+insert into public.courts (id, park_id, court_number, surface, slug, name,
+                           latitude, longitude, slot_minutes)
+values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '9f9f9f9f-0000-0000-0000-00000000f00d',
+        1, 'clay', 'quadra-teste', 'Quadra Teste', -23.561414, -46.655881, 20);
 
 update public.profiles set role = 'admin' where id = '44444444-4444-4444-4444-444444444444';
 
@@ -151,6 +157,8 @@ do $$
 declare v jsonb;
 begin
   v := public.court_queue('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+  assert v -> 'court' ->> 'name' = 'Quadra 01',
+    format('o nome vem do número no parque: %s', v -> 'court' ->> 'name');
   assert (v ->> 'teams_waiting')::int = 2, format('deveriam existir 2 times: %s', v ->> 'teams_waiting');
   assert (v -> 'current_match') = 'null'::jsonb or v -> 'current_match' is null,
          'não deveria haver partida em andamento';
@@ -171,7 +179,8 @@ begin
   where created_by = '11111111-1111-1111-1111-111111111111';
 
   v := public.start_match(v_entry);
-  assert v ->> 'status' = 'playing', format('partida deveria estar em andamento: %s', v);
+  assert (v ->> 'is_live')::boolean, format('partida deveria estar em andamento: %s', v);
+  assert (v -> 'side_b' ->> 'open')::boolean, 'sem mandante, o lado B fica aberto';
 
   select status into v_status from public.courts
   where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -207,8 +216,10 @@ do $$
 declare v jsonb;
 begin
   v := public.call_next('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-  assert v ->> 'status' = 'playing', format('dupla deveria entrar em quadra: %s', v);
-  assert jsonb_array_length(v -> 'players') = 2, 'a dupla deveria ter 2 jogadores';
+  -- call_next encerra a partida atual e devolve o próximo time da fila,
+  -- que agora precisa fazer o check-in para entrar em quadra.
+  assert jsonb_array_length(v -> 'players') = 2, 'a dupla deveria ser a próxima';
+  assert (v ->> 'position')::int = 1, format('dupla na vez: %s', v);
 end $$;
 
 -- Ana terminou: pode entrar na fila de novo
@@ -218,6 +229,15 @@ begin
   select count(*) into v_active from public.queue_entry_members
   where user_id = '11111111-1111-1111-1111-111111111111' and is_active;
   assert v_active = 0, 'após a partida o jogador deveria ficar livre para nova fila';
+end $$;
+
+-- A quadra ficou livre: a dupla chamada ainda não jogou
+do $$
+declare v jsonb;
+begin
+  v := public.court_screen('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+  assert not (v ->> 'is_live')::boolean, 'partida encerrada, quadra livre';
+  assert (v ->> 'queue_length')::int = 1, format('a dupla segue na fila: %s', v ->> 'queue_length');
 end $$;
 
 -- ---------------------------------------------------------------------

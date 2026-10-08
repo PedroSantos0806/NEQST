@@ -15,13 +15,21 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('cccc0000-0000-0000-0000-00000000000c', 'caio@example.com',  '{"full_name":"Caio Melo"}'),
   ('dddd0000-0000-0000-0000-00000000000d', 'staff@example.com', '{"full_name":"Operador"}');
 
-insert into public.courts (id, slug, name, latitude, longitude, average_match_minutes,
+insert into public.parks (id, slug, name, district, latitude, longitude)
+values
+  ('7f7f0000-0000-0000-0000-00000000f001', 'parque-central', 'Parque Central',
+   'Centro', -23.561414, -46.655881),
+  ('7f7f0000-0000-0000-0000-00000000f002', 'parque-norte', 'Parque Norte',
+   'Zona Norte', -23.545000, -46.640000);
+
+insert into public.courts (id, park_id, court_number, surface, slug, name,
+                           latitude, longitude, slot_minutes,
                            busy_threshold, full_threshold)
 values
-  ('1111aaaa-0000-0000-0000-000000000001', 'quadra-central', 'Quadra Central',
-   -23.561414, -46.655881, 20, 2, 4),
-  ('2222bbbb-0000-0000-0000-000000000002', 'quadra-norte', 'Quadra Norte',
-   -23.545000, -46.640000, 30, 3, 6);
+  ('1111aaaa-0000-0000-0000-000000000001', '7f7f0000-0000-0000-0000-00000000f001',
+   1, 'clay', 'quadra-central', 'Quadra Central', -23.561414, -46.655881, 20, 2, 4),
+  ('2222bbbb-0000-0000-0000-000000000002', '7f7f0000-0000-0000-0000-00000000f002',
+   1, 'hard', 'quadra-norte', 'Quadra Norte', -23.545000, -46.640000, 30, 3, 6);
 
 update public.profiles set role = 'admin' where id = 'dddd0000-0000-0000-0000-00000000000d';
 
@@ -359,12 +367,15 @@ end $$;
 do $$
 declare v_entry uuid;
 begin
+  -- Partida ao vivo: agora é uma linha em matches (a ocupação lê de lá).
   insert into public.queue_entries (court_id, mode, status, created_by, started_at)
   values ('1111aaaa-0000-0000-0000-000000000001', 'single', 'playing',
           'aaaa0000-0000-0000-0000-00000000000a', now())
   returning id into v_entry;
   insert into public.queue_entry_members (entry_id, court_id, user_id)
   values (v_entry, '1111aaaa-0000-0000-0000-000000000001', 'aaaa0000-0000-0000-0000-00000000000a');
+  insert into public.matches (court_id, side_a_entry_id, mode, slot_minutes, expires_at)
+  values ('1111aaaa-0000-0000-0000-000000000001', v_entry, 'single', 20, now() + interval '20 minutes');
 
   insert into public.queue_entries (court_id, mode, status, created_by)
   values ('1111aaaa-0000-0000-0000-000000000001', 'single', 'waiting',
@@ -385,7 +396,10 @@ do $$
 declare v jsonb; v_central jsonb; v_norte jsonb;
 begin
   v := public.courts_heatmap();
-  assert jsonb_array_length(v) = 2, format('2 quadras ativas: %s', v);
+  -- Escopado aos nomes do teste: a suíte pode rodar num banco com seed.
+  assert (select count(*) from jsonb_array_elements(v) c
+          where c ->> 'name' in ('Quadra Central', 'Quadra Norte')) = 2,
+    format('as 2 quadras do teste deveriam aparecer: %s', v);
 
   select c into v_central from jsonb_array_elements(v) c where c ->> 'name' = 'Quadra Central';
   select c into v_norte   from jsonb_array_elements(v) c where c ->> 'name' = 'Quadra Norte';
@@ -413,9 +427,11 @@ begin
   assert (v -> 0 ->> 'name') = 'Quadra Central', 'a quadra mais próxima é a Central';
   assert (v -> 0 ->> 'distance_meters')::numeric < 1, 'distância deveria ser ~0';
 
-  -- 5 km: as duas, ordenadas por distância
+  -- 5 km: as duas do teste, ordenadas por distância
   v := public.courts_heatmap(-23.561414, -46.655881, 5000);
-  assert jsonb_array_length(v) = 2, 'raio de 5 km pega as duas';
+  assert (select count(*) from jsonb_array_elements(v) c
+          where c ->> 'name' in ('Quadra Central', 'Quadra Norte')) = 2,
+    'raio de 5 km pega as duas do teste';
   assert (v -> 0 ->> 'name') = 'Quadra Central', 'ordenação por distância';
 end $$;
 
@@ -424,7 +440,7 @@ do $$
 declare v_count integer; v jsonb;
 begin
   v_count := public.capture_occupancy_snapshots();
-  assert v_count = 2, format('deveria registrar 1 snapshot por quadra ativa: %s', v_count);
+  assert v_count >= 2, format('ao menos 1 snapshot por quadra ativa: %s', v_count);
 
   v := public.court_occupancy_pattern('1111aaaa-0000-0000-0000-000000000001');
   assert (v ->> 'samples')::int = 1, format('1 amostra: %s', v);
@@ -439,7 +455,7 @@ do $$
 declare v jsonb;
 begin
   v := public.run_maintenance();
-  assert (v ->> 'occupancy_snapshots')::int = 2, format('manutenção deveria capturar snapshots: %s', v);
+  assert (v ->> 'occupancy_snapshots')::int >= 2, format('manutenção deveria capturar snapshots: %s', v);
   assert v ? 'expired_entries' and v ? 'purged_scan_tokens', 'manutenção mantém as rotinas da Sprint 1';
 end $$;
 
