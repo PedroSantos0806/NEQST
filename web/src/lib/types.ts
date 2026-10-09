@@ -206,3 +206,64 @@ export interface PaletteColor {
   name: string;
   sort_order: number;
 }
+
+// ---------------------------------------------------------------------
+// Administração
+// ---------------------------------------------------------------------
+
+export type AppRole = "player" | "staff" | "admin";
+
+export interface AdminCourt {
+  id: string;
+  slug: string;
+  name: string;
+  court_number: number;
+  surface: CourtSurface;
+  surface_label: string;
+  latitude: number;
+  longitude: number;
+  slot_minutes: number;
+  is_active: boolean;
+  status: string;
+  has_qr_code: boolean;
+  has_nfc_tag: boolean;
+  queue_length: number;
+}
+
+export interface AdminPark {
+  id: string;
+  slug: string;
+  name: string;
+  district: string | null;
+  city: string | null;
+  latitude: number;
+  longitude: number;
+  tone_color: string | null;
+  photo_alt: string | null;
+  is_active: boolean;
+  courts: AdminCourt[];
+}
+
+export interface AdminOverview {
+  parks: AdminPark[];
+  totals: { parks: number; courts: number; users: number };
+}
+
+export interface AdminUser {
+  user_id: string;
+  username: string;
+  full_name: string | null;
+  email: string;
+  role: AppRole;
+  initials: string;
+  created_at: string;
+  state: PlayerState;
+}
+
+export interface CourtQr {
+  courtId: string;
+  name: string;
+  version: number;
+  printUrl: string;
+  payload: string;
+}

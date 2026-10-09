@@ -7,6 +7,10 @@
  */
 import { callFunction, rpcError, supabase } from "./supabase";
 import type {
+  AdminOverview,
+  AdminUser,
+  AppRole,
+  CourtQr,
   CourtScreen,
   MatchSide,
   MatchState,
@@ -112,3 +116,74 @@ export const registerWebPush = (subscription: PushSubscriptionJSON) =>
 
 export const vapidPublicKey = () =>
   callFunction<{ publicKey: string }>("register-web-push", { method: "GET" });
+
+// ---------------------------------------------------------------------
+// Administração (só o admin passa — a checagem é no banco)
+// ---------------------------------------------------------------------
+
+export const adminOverview = () => rpc<AdminOverview>("admin_overview");
+
+export const adminUsers = (query = "") =>
+  rpc<AdminUser[]>("admin_users", { p_query: query || null, p_limit: 100 });
+
+export const adminSetRole = (userId: string, role: Exclude<AppRole, "admin">) =>
+  rpc<{ user_id: string; role: AppRole }>("admin_set_role", {
+    p_user_id: userId,
+    p_role: role,
+  });
+
+export const adminUpsertPark = (park: {
+  id?: string;
+  name?: string;
+  district?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+  toneColor?: string;
+  photoAlt?: string;
+  isActive?: boolean;
+}) =>
+  rpc("admin_upsert_park", {
+    p_id: park.id ?? null,
+    p_name: park.name ?? null,
+    p_district: park.district ?? null,
+    p_city: park.city ?? null,
+    p_latitude: park.latitude ?? null,
+    p_longitude: park.longitude ?? null,
+    p_tone_color: park.toneColor ?? null,
+    p_photo_alt: park.photoAlt ?? null,
+    p_is_active: park.isActive ?? null,
+  });
+
+export const adminUpsertCourt = (court: {
+  id?: string;
+  parkId?: string;
+  courtNumber?: number;
+  surface?: string;
+  name?: string;
+  latitude?: number;
+  longitude?: number;
+  slotMinutes?: number;
+  hasQrCode?: boolean;
+  hasNfcTag?: boolean;
+  isActive?: boolean;
+}) =>
+  rpc("admin_upsert_court", {
+    p_id: court.id ?? null,
+    p_park_id: court.parkId ?? null,
+    p_court_number: court.courtNumber ?? null,
+    p_surface: court.surface ?? null,
+    p_name: court.name ?? null,
+    p_latitude: court.latitude ?? null,
+    p_longitude: court.longitude ?? null,
+    p_slot_minutes: court.slotMinutes ?? null,
+    p_has_qr_code: court.hasQrCode ?? null,
+    p_has_nfc_tag: court.hasNfcTag ?? null,
+    p_is_active: court.isActive ?? null,
+  });
+
+/** O conteúdo assinado que vai impresso na quadra. */
+export const courtQr = (courtId: string) =>
+  callFunction<CourtQr>(`admin-court-qr?courtId=${encodeURIComponent(courtId)}`, {
+    method: "GET",
+  });

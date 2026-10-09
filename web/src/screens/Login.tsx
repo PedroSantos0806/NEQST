@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../hooks/useAuth";
-import { authMessage, stripAuthParams, urlAuthError } from "../lib/auth-messages";
+import { authMessage, stripAuthParams, urlAuthError, withTimeout } from "../lib/auth-messages";
+import { takeAfterLogin } from "../lib/after-login";
 import { buttonStyle } from "../components/ui";
 
 type Mode = "signin" | "signup" | "reset";
@@ -35,9 +36,7 @@ export function Login() {
   // continuava a mesma.
   useEffect(() => {
     if (loading || !session) return;
-    const pending = sessionStorage.getItem("neqst:after-login");
-    sessionStorage.removeItem("neqst:after-login");
-    navigate(pending ?? "/", { replace: true });
+    navigate(takeAfterLogin(), { replace: true });
   }, [loading, session, navigate]);
 
   // Link de e-mail que falhou volta com o motivo na própria URL — ou,
@@ -68,17 +67,24 @@ export function Login() {
 
     try {
       if (mode === "reset") {
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/auth/callback?reset=1`,
-        });
+        const { error } = await withTimeout(
+          supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: `${window.location.origin}/auth/callback?reset=1`,
+          }),
+        );
         if (error) throw error;
         setMessage({ tone: "ok", text: "Enviamos um link de redefinição para o seu e-mail." });
       } else if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { full_name: name.trim() }, emailRedirectTo: redirectTo },
-        });
+        const { data, error } = await withTimeout(
+          supabase.auth.signUp({
+            email,
+            password,
+            options: { data: { full_name: name.trim() }, emailRedirectTo: redirectTo },
+          }),
+          25,
+          "A criação da conta demorou demais. Tente entrar com e-mail e senha — "
+            + "se a conta tiver sido criada, o login funciona; se não, cadastre de novo.",
+        );
         if (error) throw error;
 
         // Com a confirmação de e-mail desligada no Supabase, o signUp já
@@ -89,7 +95,9 @@ export function Login() {
         setPassword("");
         setMessage({ tone: "ok", text: "Confirme o seu cadastro no e-mail." });
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { error } = await withTimeout(
+          supabase.auth.signInWithPassword({ email, password }),
+        );
         if (error) throw error;
       }
     } catch (cause) {

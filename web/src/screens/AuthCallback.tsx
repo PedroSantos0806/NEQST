@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Loading } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { urlAuthError } from "../lib/auth-messages";
+import { takeAfterLogin } from "../lib/after-login";
 
 /**
  * Volta do OAuth e do link de e-mail. O supabase-js já troca o código
@@ -32,9 +33,7 @@ export function AuthCallback() {
       return;
     }
 
-    const pending = sessionStorage.getItem("neqst:after-login");
-    sessionStorage.removeItem("neqst:after-login");
-    navigate(pending ?? "/", { replace: true });
+    navigate(takeAfterLogin(), { replace: true });
   }, [loading, session, navigate, params]);
 
   return <Loading what="Entrando" />;

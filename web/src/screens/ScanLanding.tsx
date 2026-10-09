@@ -4,6 +4,7 @@ import { scanCourt } from "../lib/api";
 import { getPosition, LocationError } from "../lib/geo";
 import { ErrorState, Loading, buttonStyle } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
+import { rememberAfterLogin } from "../lib/after-login";
 
 /**
  * Rota /q/:courtId — onde cai quem aponta a câmera do celular para o QR
@@ -26,7 +27,7 @@ export function ScanLanding() {
 
     // Sem login não dá para entrar na fila: guardamos para onde voltar.
     if (!session) {
-      sessionStorage.setItem("neqst:after-login", window.location.pathname + window.location.search);
+      rememberAfterLogin(window.location.pathname + window.location.search);
       navigate("/entrar", { replace: true });
       return;
     }
