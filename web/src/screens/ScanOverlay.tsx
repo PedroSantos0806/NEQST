@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Close, NfcIcon } from "../components/icons";
+import { Close, NfcIcon, Warn } from "../components/icons";
 import { scanCourt } from "../lib/api";
 import { getPosition, LocationError } from "../lib/geo";
 import { nfcSupported, qrSupported, readNfcTag, ScanError, startQrScanner } from "../lib/scan";
@@ -62,8 +62,14 @@ export function ScanOverlay({
   }
 
   // Câmera
+  //
+  // `error` entra nas dependências de propósito: enquanto houver erro a
+  // leitura fica parada. Sem isso, o efeito remontava o scanner assim
+  // que `working` voltava a false, ele relia na hora o mesmo código
+  // ainda na frente da câmera, e o erro piscava em laço até a pessoa
+  // afastar o celular.
   useEffect(() => {
-    if (method !== "qr" || working) return;
+    if (method !== "qr" || working || error) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -82,18 +88,18 @@ export function ScanOverlay({
       scanner?.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [method, working]);
+  }, [method, working, error]);
 
-  // NFC
+  // NFC — mesma regra: parado enquanto o erro estiver na tela.
   useEffect(() => {
-    if (method !== "nfc" || working) return;
+    if (method !== "nfc" || working || error) return;
     const controller = new AbortController();
     readNfcTag(controller.signal)
       .then((value) => void handlePayload(value))
       .catch((cause: ScanError) => setError(cause.message));
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [method, working]);
+  }, [method, working, error]);
 
   const title = purpose === "start"
     ? method === "qr" ? "Check-in para jogar" : "Toque para jogar"
@@ -182,6 +188,44 @@ export function ScanOverlay({
         </div>
       )}
 
+      {error
+        ? (
+          <div
+            className="fade"
+            role="alert"
+            style={{ flexGrow: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, textAlign: "center" }}
+          >
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 72, height: 72, borderRadius: "50%", background: "rgba(177,63,22,.18)", color: "var(--rust)" }}>
+              <Warn size={36} />
+            </span>
+
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>Não deu para ler</span>
+              <span style={{ fontSize: 15, lineHeight: 1.5, color: "var(--chalk)", maxWidth: 300 }}>
+                {error}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              className="press"
+              onClick={() => { setError(null); done.current = false; }}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, minWidth: 220, minHeight: 56, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 16, fontWeight: 800 }}
+            >
+              Tentar de novo
+            </button>
+
+            <button
+              type="button"
+              className="press"
+              onClick={onClose}
+              style={{ minHeight: 44, padding: "0 16px", background: "transparent", color: "var(--mauve)", border: 0, fontSize: 14, fontWeight: 600, textDecoration: "underline" }}
+            >
+              Fechar
+            </button>
+          </div>
+        )
+        : (
       <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22 }}>
         {method === "qr"
           ? (
@@ -247,26 +291,13 @@ export function ScanOverlay({
           {working ? "Conferindo que você está na quadra…" : `Procurando ${court.court.name}…`}
         </span>
       </div>
-
-      {error
-        ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <p role="alert" style={{ margin: 0, fontSize: 13, lineHeight: 1.4, color: "var(--ocre)" }}>{error}</p>
-            <button
-              type="button"
-              className="press"
-              onClick={() => { setError(null); done.current = false; }}
-              style={{ minHeight: 52, background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 10, fontSize: 15, fontWeight: 700 }}
-            >
-              Tentar de novo
-            </button>
-          </div>
-        )
-        : (
-          <p style={{ margin: 0, textAlign: "center", fontSize: 12, lineHeight: 1.45, color: "var(--mauve)" }}>
-            A leitura precisa da sua localização: é ela que prova que você está na quadra.
-          </p>
         )}
+
+      {!error && (
+        <p style={{ margin: 0, textAlign: "center", fontSize: 12, lineHeight: 1.45, color: "var(--mauve)" }}>
+          A leitura precisa da sua localização: é ela que prova que você está na quadra.
+        </p>
+      )}
     </div>
   );
 }

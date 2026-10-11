@@ -73,7 +73,10 @@ export function ScanLanding() {
         if (apiError.code === "TOO_FAR_FROM_COURT") {
           setError({
             title: "Você está longe demais desta quadra",
-            detail: "Chegue até a quadra e escaneie de novo. Se estiver no computador, use o celular.",
+            // A função diz a que distância você está e qual é o limite;
+            // isso ajuda mais do que a frase genérica que havia aqui.
+            detail: apiError.message
+              ?? "Chegue até a quadra e escaneie de novo. Se estiver no computador, use o celular.",
           });
           return;
         }
