@@ -306,6 +306,7 @@ function CourtRow({
       <span style={{ fontSize: 12, color: "var(--green)" }}>
         Slot de {court.slot_minutes} min · {court.queue_length} na fila
         {court.has_nfc_tag ? " · NFC" : ""}
+        {court.max_distance_meters !== 1000 && ` · raio ${court.max_distance_meters} m`}
       </span>
 
       {editing
@@ -375,6 +376,30 @@ function QrPanel({ qr, onClose }: { qr: CourtQr; onClose: () => void }) {
       <code style={{ fontSize: 10, lineHeight: 1.4, wordBreak: "break-all", color: "var(--muted)", textAlign: "center" }}>
         {qr.printUrl}
       </code>
+
+      {/*
+        A mesma quadra, pelo caminho da tag NFC. Quem for gravar a tag
+        escreve este conteúdo como registro de URL — a leitura cai no
+        mesmo lugar do QR, só que por aproximação.
+      */}
+      <div style={{ width: "100%", paddingTop: 10, borderTop: "1px dashed rgba(47,70,41,.3)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--green)" }}>
+            Para gravar na tag NFC
+          </span>
+          <button
+            type="button"
+            className="press"
+            onClick={() => void navigator.clipboard?.writeText(`${qr.printUrl}&m=nfc`)}
+            style={{ minHeight: 30, padding: "0 8px", background: "transparent", border: "1.5px solid rgba(47,70,41,.3)", borderRadius: 6, fontSize: 11, fontWeight: 700, color: "var(--green)" }}
+          >
+            Copiar
+          </button>
+        </div>
+        <code style={{ display: "block", fontSize: 10, lineHeight: 1.4, wordBreak: "break-all", color: "var(--muted)" }}>
+          {qr.printUrl}&amp;m=nfc
+        </code>
+      </div>
 
       <div style={{ display: "flex", gap: 8, width: "100%" }}>
         <button
@@ -542,6 +567,7 @@ function CourtForm({
   const [slot, setSlot] = useState(String(court?.slot_minutes ?? 40));
   const [nfc, setNfc] = useState(court?.has_nfc_tag ?? false);
   const [active, setActive] = useState(court?.is_active ?? true);
+  const [radius, setRadius] = useState(String(court?.max_distance_meters ?? 1000));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -557,6 +583,7 @@ function CourtForm({
         slotMinutes: Number(slot) || 40,
         hasNfcTag: nfc,
         isActive: active,
+        maxDistanceMeters: Number(radius) || 1000,
       });
       await onSaved();
     } catch (cause) {
@@ -607,6 +634,13 @@ function CourtForm({
 
       <Field label="Slot de jogo (minutos)" hint="É o relógio que dispara a próxima da fila.">
         <input value={slot} onChange={(e) => setSlot(e.target.value)} inputMode="numeric" style={field} />
+      </Field>
+
+      <Field
+        label="Raio de proximidade (metros)"
+        hint="Distância máxima da quadra para a leitura do QR valer. O padrão é 1000. Para testar longe da quadra, aumente."
+      >
+        <input value={radius} onChange={(e) => setRadius(e.target.value)} inputMode="numeric" style={field} />
       </Field>
 
       <Toggle label="Tem tag NFC" checked={nfc} onChange={setNfc} />

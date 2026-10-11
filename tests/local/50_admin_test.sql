@@ -127,6 +127,18 @@ begin
   v := public.admin_upsert_court((v_court2 ->> 'id')::uuid, p_is_active => false);
   assert not (v ->> 'is_active')::boolean, 'desativou';
 
+  -- Raio de proximidade: padrão ao criar, editável depois
+  assert (v_court ->> 'max_distance_meters')::int = 1000, 'raio padrão de 1 km';
+  assert (v_court ->> 'gps_tolerance_meters')::int = 200, 'tolerância padrão de 200 m';
+
+  v := public.admin_upsert_court(
+    (v_court ->> 'id')::uuid,
+    p_max_distance_meters => 20000,
+    p_gps_tolerance_meters => 2000
+  );
+  assert (v ->> 'max_distance_meters')::int = 20000, format('raio afrouxado: %s', v ->> 'max_distance_meters');
+  assert (v ->> 'gps_tolerance_meters')::int = 2000, 'tolerância afrouxada';
+
   -- O painel enxerga o que foi criado
   v := public.admin_overview();
   assert (

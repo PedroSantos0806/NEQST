@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useLiveCourt, useTicker } from "../hooks/useLiveCourt";
 import { SURFACE_COLOR, eta, hhmm, mmss, surfaceTextColor } from "../lib/format";
 import { rememberCourt, rememberPark } from "../lib/nav";
@@ -24,6 +24,7 @@ type Flow =
 export function Court() {
   const { courtId } = useParams<{ courtId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { data, error, loading, refresh } = useLiveCourt(courtId);
   const [flow, setFlow] = useState<Flow>({ kind: "none" });
   const [busy, setBusy] = useState(false);
@@ -53,6 +54,24 @@ export function Court() {
   }, [data]);
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  /**
+   * Chegou do QR impresso com a leitura já validada: abre a folha de
+   * entrar na fila direto, em vez de pedir uma segunda leitura. O
+   * estado é consumido na hora — recarregar a página não deve repetir
+   * isso com um token já gasto.
+   */
+  useEffect(() => {
+    const handoff = location.state as { scan?: ScanResult; method?: "qr" | "nfc" } | null;
+    if (!handoff?.scan) return;
+
+    navigate(location.pathname, { replace: true, state: null });
+
+    const expired = new Date(handoff.scan.expiresAt).getTime() <= Date.now();
+    if (expired) return;
+
+    setFlow({ kind: "join", scan: handoff.scan, method: handoff.method ?? "qr" });
+  }, [location.state, location.pathname, navigate]);
 
   function later(fn: () => void, ms: number) {
     timers.current.push(window.setTimeout(fn, ms));

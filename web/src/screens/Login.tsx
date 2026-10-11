@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../hooks/useAuth";
 import { authMessage, stripAuthParams, urlAuthError, withTimeout } from "../lib/auth-messages";
-import { takeAfterLogin } from "../lib/after-login";
+import { callbackUrl, takeAfterLogin } from "../lib/after-login";
 import { buttonStyle } from "../components/ui";
 
 type Mode = "signin" | "signup" | "reset";
@@ -29,7 +29,10 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
 
-  const redirectTo = `${window.location.origin}/auth/callback`;
+  // Leva junto para onde voltar: quem veio do QR de uma quadra precisa
+  // cair nela depois de confirmar o e-mail, mesmo que o link abra noutro
+  // navegador.
+  const redirectTo = callbackUrl();
 
   // Quem já está logado não tem o que fazer aqui. É isto que faltava
   // quando o login "não acontecia nada": a sessão era criada e a tela
@@ -69,7 +72,7 @@ export function Login() {
       if (mode === "reset") {
         const { error } = await withTimeout(
           supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${window.location.origin}/auth/callback?reset=1`,
+            redirectTo: callbackUrl({ reset: "1" }),
           }),
         );
         if (error) throw error;

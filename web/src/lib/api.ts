@@ -167,6 +167,8 @@ export const adminUpsertCourt = (court: {
   hasQrCode?: boolean;
   hasNfcTag?: boolean;
   isActive?: boolean;
+  maxDistanceMeters?: number;
+  gpsToleranceMeters?: number;
 }) =>
   rpc("admin_upsert_court", {
     p_id: court.id ?? null,
@@ -180,6 +182,8 @@ export const adminUpsertCourt = (court: {
     p_has_qr_code: court.hasQrCode ?? null,
     p_has_nfc_tag: court.hasNfcTag ?? null,
     p_is_active: court.isActive ?? null,
+    p_max_distance_meters: court.maxDistanceMeters ?? null,
+    p_gps_tolerance_meters: court.gpsToleranceMeters ?? null,
   });
 
 /** O conteúdo assinado que vai impresso na quadra. */

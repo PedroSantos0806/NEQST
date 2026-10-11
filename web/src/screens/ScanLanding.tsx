@@ -47,10 +47,13 @@ export function ScanLanding() {
         });
 
         if (!cancelled) {
-          // O token de 30s não sobrevive à navegação; a tela da quadra
-          // pede um novo na hora de entrar na fila. O que importa aqui é
-          // que a validação passou e sabemos qual quadra é.
-          navigate(`/quadra/${result.court.id}`, { replace: true });
+          // O token vale 30s — tempo de sobra para a navegação seguinte.
+          // Levá-lo junto evita pedir uma segunda leitura: quem escaneou
+          // o QR impresso já cai na folha de entrar na fila.
+          navigate(`/quadra/${result.court.id}`, {
+            replace: true,
+            state: { scan: result, method: params.get("m") === "nfc" ? "nfc" : "qr" },
+          });
         }
       } catch (cause) {
         if (cancelled) return;
