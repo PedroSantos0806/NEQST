@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { parksOverview } from "../lib/api";
 import { getPosition } from "../lib/geo";
 import { Badge, ErrorState, Loading } from "../components/ui";
-import { ChevronRight, Pin, SurfaceIcon } from "../components/icons";
+import { ChevronRight, Lock, Pin, SurfaceIcon } from "../components/icons";
 import { distance, firstName, greeting, initialsOf, SURFACE_COLOR, surfaceTextColor } from "../lib/format";
 import { toneStyle } from "../lib/me";
 import { useMe } from "../hooks/useMe";
@@ -76,6 +76,42 @@ export function Parks() {
           Escolha o parque para ver as quadras, o placar e a fila ao vivo.
         </p>
       </div>
+
+      {/*
+        O admin entra por aqui. Antes o único caminho era Perfil ›
+        Administração, dois toques escondidos atrás de uma tela que não
+        tem nada a ver com gerenciar quadras.
+      */}
+      {profile?.profile?.role === "admin" && (
+        <button
+          type="button"
+          className="press"
+          onClick={() => navigate("/admin")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            width: "100%",
+            padding: "12px 14px",
+            background: "var(--ink)",
+            color: "var(--chalk)",
+            border: 0,
+            borderRadius: 12,
+            textAlign: "left",
+          }}
+        >
+          <span style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 44, height: 44, background: "var(--ocre)", color: "var(--ink)", borderRadius: 8 }}>
+            <Lock size={20} />
+          </span>
+          <span style={{ display: "flex", flexDirection: "column", gap: 2, flexGrow: 1 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ocre)" }}>
+              Painel do administrador
+            </span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Quadras, parques e contas</span>
+          </span>
+          <ChevronRight size={20} />
+        </button>
+      )}
 
       <div
         style={{
