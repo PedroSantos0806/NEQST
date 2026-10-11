@@ -10,7 +10,18 @@ const raw = {
   supabaseUrl: import.meta.env.VITE_SUPABASE_URL as string | undefined,
   supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined,
   vapidPublicKey: import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined,
+  mapTileUrl: import.meta.env.VITE_MAP_TILE_URL as string | undefined,
+  mapTileAttribution: import.meta.env.VITE_MAP_TILE_ATTRIBUTION as string | undefined,
 };
+
+/**
+ * Azulejos do mapa. O padrão é o OpenStreetMap, que não pede chave: o
+ * mapa aparece num deploy novo sem configurar nada. Quem quiser imagem
+ * de satélite (ajuda a achar a quadra dentro do parque) troca as duas
+ * variáveis no deploy — a atribuição é exigência de licença dos dois.
+ */
+const OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const OSM_ATTRIBUTION = "© colaboradores do OpenStreetMap";
 
 export function isConfigured(): boolean {
   return Boolean(raw.supabaseUrl && raw.supabaseAnonKey);
@@ -30,6 +41,12 @@ export const env = {
   },
   get vapidPublicKey() {
     return raw.vapidPublicKey;
+  },
+  get mapTileUrl() {
+    return raw.mapTileUrl || OSM_TILES;
+  },
+  get mapTileAttribution() {
+    return raw.mapTileAttribution || OSM_ATTRIBUTION;
   },
 };
 
