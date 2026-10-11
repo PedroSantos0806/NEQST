@@ -160,9 +160,15 @@ direto em `/admin`. De lá dá para:
 - criar e editar quadras — número e nome saem automáticos, e o piso, o
   slot de jogo e a tag NFC são por quadra;
 - **gerar o QR Code de cada quadra**, já assinado e pronto para
-  imprimir;
+  imprimir (e o conteúdo para gravar numa tag NFC, quando o parque
+  topar instalar uma);
 - promover alguém a **moderador** (encerra partida travada, chama o
   próximo, aprova fotos) ou rebaixar de volta a jogador.
+
+> Se o botão "QR para imprimir" responder que a função não está
+> publicada, é porque as Edge Functions ainda não foram para o
+> Supabase — ver [`docs/deploy.md`](deploy.md#4-deploy-das-funções).
+> O mesmo vale para ler o QR e entrar na fila.
 
 ### Trocar de administrador
 

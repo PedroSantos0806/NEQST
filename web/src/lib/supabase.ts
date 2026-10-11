@@ -34,14 +34,57 @@ export async function callFunction<T>(
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const error = (payload as { error?: { code?: string; message?: string } } | null)?.error;
-    throw new ApiError(
-      error?.code ?? "REQUEST_FAILED",
-      error?.message ?? `A chamada falhou (${response.status}).`,
-    );
+    throw functionError(response.status, path, payload);
   }
 
   return payload as T;
+}
+
+/**
+ * Erro de uma Edge Function.
+ *
+ * Dois formatos convivem: o nosso (`{ error: { code, message } }`) e o
+ * do próprio Supabase, que responde `{ code, message }` na raiz quando
+ * a requisição nem chega à função. O segundo caía no texto genérico
+ * "A chamada falhou (404)", que não dizia o principal: a função não
+ * está publicada no projeto.
+ */
+function functionError(status: number, path: string, payload: unknown): ApiError {
+  const body = (payload ?? {}) as {
+    error?: { code?: string; message?: string };
+    code?: number | string;
+    message?: string;
+  };
+
+  const ours = body.error;
+  if (ours?.message) return new ApiError(ours.code ?? "REQUEST_FAILED", ours.message);
+
+  const name = path.split("?")[0];
+
+  if (status === 404) {
+    return new ApiError(
+      "FUNCTION_NOT_DEPLOYED",
+      `A função "${name}" não está publicada neste projeto do Supabase. `
+        + "Publique as Edge Functions (supabase functions deploy) — ver docs/deploy.md.",
+    );
+  }
+
+  if (status === 401 || status === 403) {
+    return new ApiError(
+      "FORBIDDEN",
+      body.message ?? "Você não tem permissão para esta ação.",
+    );
+  }
+
+  if (status >= 500) {
+    return new ApiError(
+      "FUNCTION_ERROR",
+      `A função "${name}" respondeu com erro (${status}). `
+        + "Veja os logs em Supabase › Edge Functions › Logs.",
+    );
+  }
+
+  return new ApiError("REQUEST_FAILED", body.message ?? `A chamada falhou (${status}).`);
 }
 
 export class ApiError extends Error {

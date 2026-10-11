@@ -227,6 +227,9 @@ export interface AdminCourt {
   status: string;
   has_qr_code: boolean;
   has_nfc_tag: boolean;
+  max_distance_meters: number;
+  gps_tolerance_meters: number;
+  qr_secret_version: number;
   queue_length: number;
 }
 

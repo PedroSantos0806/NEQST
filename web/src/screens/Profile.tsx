@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { profileSummary, racketPalette, updateProfile } from "../lib/api";
 import { enablePush, isIos, isStandalone, pushSupported } from "../lib/push";
 import { invalidateMe, toneStyle } from "../lib/me";
+import { callbackUrl } from "../lib/after-login";
 import { lastCourt, lastPark } from "../lib/nav";
 import { Racket, stackStyle } from "../components/Racket";
 import { BottomNav } from "../components/BottomNav";
@@ -115,7 +116,7 @@ export function Profile() {
     if (!email) return;
     setBusy(true);
     const { error: cause } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?reset=1`,
+      redirectTo: callbackUrl({ reset: "1" }),
     });
     setBusy(false);
     setPwSent(!cause);

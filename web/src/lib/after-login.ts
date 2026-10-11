@@ -28,6 +28,38 @@ export function rememberAfterLogin(path: string): void {
   }
 }
 
+/** Espia o destino sem consumir — para montar o link do e-mail. */
+export function peekAfterLogin(): string | null {
+  try {
+    return internalPath(sessionStorage.getItem(KEY));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * O destino sobrevive à ida ao e-mail.
+ *
+ * O link de confirmação costuma abrir noutra aba — às vezes noutro
+ * navegador — e ali a sessionStorage não existe. Quem escaneou o QR da
+ * quadra e criou a conta tem de voltar para aquela quadra, então o
+ * destino viaja na própria URL de retorno.
+ */
+export function callbackUrl(extra?: Record<string, string>): string {
+  const url = new URL("/auth/callback", window.location.origin);
+  const next = peekAfterLogin();
+  if (next) url.searchParams.set("next", next);
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
+/** O `next` da URL, se for um caminho interno. */
+export function nextFromUrl(search = window.location.search): string | null {
+  return internalPath(new URLSearchParams(search).get("next"));
+}
+
 /** Lê e consome o destino. Devolve "/" quando não há um válido. */
 export function takeAfterLogin(): string {
   let stored: string | null = null;

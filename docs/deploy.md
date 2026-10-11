@@ -102,15 +102,55 @@ injetados automaticamente pelo runtime.
 
 ## 4. Deploy das funções
 
+> **Mergear o PR também não publica as funções.** Elas vivem no
+> repositório mas rodam no Supabase, e só chegam lá por este comando.
+> Enquanto não rodar, tudo o que depende delas responde **404** — ler o
+> QR, entrar na fila, fazer check-in, encerrar a partida e o botão "QR
+> para imprimir" da administração.
+
 ```bash
-supabase functions deploy scan-court join-queue leave-queue queue-status \
-                          call-next register-push-token admin-court-qr \
-                          dispatch-notifications register-web-push court-photo
+supabase functions deploy          # publica TODAS as funções de supabase/functions/
 ```
+
+Sem argumentos de propósito: uma lista escrita à mão envelhece, e uma
+função esquecida só aparece como 404 no meio de um teste. (Foi o que
+aconteceu: `check-in` e `match` ficaram de fora da lista que este
+documento trazia antes.)
+
+As funções hoje são:
+
+| Função | Para quê |
+|---|---|
+| `scan-court` | valida o QR/NFC e a distância, emite o token de 30s |
+| `join-queue` · `leave-queue` | entrar e sair da fila |
+| `check-in` | libera o placar e começa a partida |
+| `match` | quem ganhou |
+| `call-next` · `queue-status` | chamar o próximo, consultar a fila |
+| `admin-court-qr` | o QR assinado de cada quadra (tela de admin) |
+| `court-photo` | fotos das quadras |
+| `register-push-token` · `register-web-push` | avisos |
+| `dispatch-notifications` | o envio em si (cron) |
+
+Confira o que está publicado em **Supabase › Edge Functions** — a lista
+na tela tem de bater com a de cima.
 
 `queue-status` e `dispatch-notifications` são declaradas com
 `verify_jwt = false` em `supabase/config.toml`: a primeira é pública, a
 segunda se autentica pelo header `x-cron-secret`.
+
+### Nunca publicou nada ainda?
+
+```bash
+npx supabase login                      # abre o navegador
+npx supabase link --project-ref iqspcnjjmkzkhulrefpa
+npx supabase secrets set QR_SIGNING_SECRET="$(openssl rand -hex 32)"
+npx supabase secrets set APP_BASE_URL="https://<seu-dominio>.vercel.app"
+npx supabase functions deploy
+```
+
+O `QR_SIGNING_SECRET` precisa existir **antes** de gerar qualquer QR: é
+ele que assina o código. Trocá-lo depois invalida todos os QR já
+impressos.
 
 ## 5. Agendamentos
 
