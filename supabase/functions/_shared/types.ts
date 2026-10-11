@@ -40,6 +40,7 @@ export interface CourtRow {
   longitude: number;
   max_distance_meters: number;
   gps_tolerance_meters: number;
+  enforce_proximity: boolean;
   slot_minutes: number;
   has_qr_code: boolean;
   has_nfc_tag: boolean;

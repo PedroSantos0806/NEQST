@@ -89,7 +89,8 @@ serve(async (req) => {
     .from("courts")
     .select(
       "id, slug, name, address, photo_url, status, is_active, latitude, longitude," +
-        " max_distance_meters, gps_tolerance_meters, slot_minutes, qr_secret_version," +
+        " max_distance_meters, gps_tolerance_meters, enforce_proximity," +
+        " slot_minutes, qr_secret_version," +
         " court_number, surface, has_qr_code, has_nfc_tag, park_id",
     )
     .eq("id", qr.courtId)
@@ -129,10 +130,14 @@ serve(async (req) => {
     body.accuracy,
   );
 
-  if (distanceMeters > allowed) {
+  // `enforce_proximity = false` é uma escolha do admin, quadra a quadra,
+  // para que o time de testes não precise estar na quadra. A distância
+  // continua medida e registrada — só não barra.
+  if (court.enforce_proximity !== false && distanceMeters > allowed) {
     throw new ApiError(
       "TOO_FAR_FROM_COURT",
-      "Você está longe demais desta quadra",
+      `Você está a ${Math.round(distanceMeters)} m da ${court.name}, e o limite é ` +
+        `${Math.round(allowed)} m. Chegue até a quadra e escaneie de novo.`,
       403,
       {
         distanceMeters: Math.round(distanceMeters),

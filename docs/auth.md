@@ -170,6 +170,20 @@ direto em `/admin`. De lá dá para:
 > Supabase — ver [`docs/deploy.md`](deploy.md#4-deploy-das-funções).
 > O mesmo vale para ler o QR e entrar na fila.
 
+### Testar sem estar na quadra
+
+A verificação de distância é o que impede alguém de entrar na fila de
+casa — e é também o que trava o time de testes. Em vez de aumentar o
+raio (o que faria a quadra vizinha também aceitar), cada quadra tem um
+interruptor: **Editar quadra › Exigir estar perto da quadra**.
+
+Desligado, a leitura é aceita de qualquer lugar e a quadra passa a
+exibir um aviso em vermelho na tela de administração. A distância
+continua sendo medida e gravada — só não barra.
+
+> Ligue de volta antes de abrir a quadra ao público. Com ele desligado,
+> qualquer pessoa entra na fila sem sair de casa.
+
 ### Trocar de administrador
 
 Como só pode haver um, rebaixe o atual antes:

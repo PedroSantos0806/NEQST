@@ -9,7 +9,7 @@ import {
   courtQr,
 } from "../lib/api";
 import { ErrorState, Loading, buttonStyle } from "../components/ui";
-import { Check, ChevronLeft, Close, Pin, Search, SurfaceIcon } from "../components/icons";
+import { Check, ChevronLeft, Close, Pin, Search, SurfaceIcon, Warn } from "../components/icons";
 import { SURFACE_COLOR, surfaceTextColor } from "../lib/format";
 import type { AdminCourt, AdminOverview, AdminPark, AdminUser, CourtQr } from "../lib/types";
 
@@ -306,8 +306,17 @@ function CourtRow({
       <span style={{ fontSize: 12, color: "var(--green)" }}>
         Slot de {court.slot_minutes} min · {court.queue_length} na fila
         {court.has_nfc_tag ? " · NFC" : ""}
-        {court.max_distance_meters !== 1000 && ` · raio ${court.max_distance_meters} m`}
+        {typeof court.max_distance_meters === "number"
+          && court.max_distance_meters !== 1000
+          && ` · raio ${court.max_distance_meters} m`}
       </span>
+
+      {court.enforce_proximity === false && (
+        <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "rgba(177,63,22,.12)", border: "1px solid var(--rust)", borderRadius: 6, fontSize: 11, fontWeight: 700, color: "var(--rust)" }}>
+          <Warn size={13} />
+          Sem verificação de distância — só para testes
+        </span>
+      )}
 
       {editing
         ? (
@@ -568,6 +577,7 @@ function CourtForm({
   const [nfc, setNfc] = useState(court?.has_nfc_tag ?? false);
   const [active, setActive] = useState(court?.is_active ?? true);
   const [radius, setRadius] = useState(String(court?.max_distance_meters ?? 1000));
+  const [checkDistance, setCheckDistance] = useState(court?.enforce_proximity ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -584,6 +594,7 @@ function CourtForm({
         hasNfcTag: nfc,
         isActive: active,
         maxDistanceMeters: Number(radius) || 1000,
+        enforceProximity: checkDistance,
       });
       await onSaved();
     } catch (cause) {
@@ -636,12 +647,24 @@ function CourtForm({
         <input value={slot} onChange={(e) => setSlot(e.target.value)} inputMode="numeric" style={field} />
       </Field>
 
-      <Field
-        label="Raio de proximidade (metros)"
-        hint="Distância máxima da quadra para a leitura do QR valer. O padrão é 1000. Para testar longe da quadra, aumente."
-      >
-        <input value={radius} onChange={(e) => setRadius(e.target.value)} inputMode="numeric" style={field} />
-      </Field>
+      <Toggle label="Exigir estar perto da quadra" checked={checkDistance} onChange={setCheckDistance} />
+
+      {checkDistance
+        ? (
+          <Field
+            label="Raio de proximidade (metros)"
+            hint="Distância máxima da quadra para a leitura do QR valer. O padrão é 1000."
+          >
+            <input value={radius} onChange={(e) => setRadius(e.target.value)} inputMode="numeric" style={field} />
+          </Field>
+        )
+        : (
+          <p style={{ margin: 0, padding: "10px 12px", background: "rgba(177,63,22,.1)", border: "1.5px solid var(--rust)", borderRadius: 8, fontSize: 12, lineHeight: 1.45, color: "var(--rust)" }}>
+            <strong>Esta quadra aceita leitura de qualquer lugar.</strong> Serve para o time
+            testar sem sair da mesa. Ligue de volta antes de abrir a quadra ao público — é esta
+            verificação que impede alguém de entrar na fila de casa.
+          </p>
+        )}
 
       <Toggle label="Tem tag NFC" checked={nfc} onChange={setNfc} />
       {court && <Toggle label="Quadra ativa" checked={active} onChange={setActive} />}

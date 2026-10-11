@@ -62,10 +62,18 @@ export function Court() {
    * isso com um token já gasto.
    */
   useEffect(() => {
-    const handoff = location.state as { scan?: ScanResult; method?: "qr" | "nfc" } | null;
-    if (!handoff?.scan) return;
+    const handoff = location.state as
+      | { scan?: ScanResult; method?: "qr" | "nfc"; openScan?: boolean }
+      | null;
+    if (!handoff?.scan && !handoff?.openScan) return;
 
     navigate(location.pathname, { replace: true, state: null });
+
+    // Veio da barra inferior: abre a câmera em vez da folha.
+    if (!handoff.scan) {
+      setFlow({ kind: "scan", purpose: "join" });
+      return;
+    }
 
     const expired = new Date(handoff.scan.expiresAt).getTime() <= Date.now();
     if (expired) return;

@@ -24,6 +24,10 @@ export function BottomNav({
   const navigate = useNavigate();
   const board = courtId ?? lastCourt(parkId);
 
+  // Fora da tela da quadra o botão continua útil: leva até a última
+  // quadra aberta já com a leitura em andamento. Antes ele só ficava
+  // apagado, e quem estava na lista de quadras não tinha como escanear.
+
   // A barra é fixa; a folga no fim da página sai daqui, para a tela não
   // precisar saber se ela existe.
   useEffect(() => {
@@ -68,8 +72,8 @@ export function BottomNav({
         <button
           type="button"
           className="press"
-          onClick={onScan}
-          disabled={!onScan}
+          onClick={onScan ?? (board ? () => navigate(`/quadra/${board}`, { state: { openScan: true } }) : undefined)}
+          disabled={!onScan && !board}
           aria-label="Escanear QR ou NFC da quadra"
           style={{
             display: "flex",
@@ -88,7 +92,7 @@ export function BottomNav({
             fontWeight: 800,
             letterSpacing: ".06em",
             boxShadow: "0 0 0 3px var(--chalk)",
-            opacity: onScan ? 1 : 0.45,
+            opacity: onScan || board ? 1 : 0.45,
           }}
         >
           <QrIcon size={26} />

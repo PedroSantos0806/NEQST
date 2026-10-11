@@ -229,6 +229,7 @@ export interface AdminCourt {
   has_nfc_tag: boolean;
   max_distance_meters: number;
   gps_tolerance_meters: number;
+  enforce_proximity: boolean;
   qr_secret_version: number;
   queue_length: number;
 }
@@ -265,6 +266,7 @@ export interface AdminUser {
 
 export interface CourtQr {
   courtId: string;
+  slug?: string;
   name: string;
   version: number;
   printUrl: string;
