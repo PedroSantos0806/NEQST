@@ -139,6 +139,22 @@ begin
   assert (v ->> 'max_distance_meters')::int = 20000, format('raio afrouxado: %s', v ->> 'max_distance_meters');
   assert (v ->> 'gps_tolerance_meters')::int = 2000, 'tolerância afrouxada';
 
+  -- Interruptor de proximidade: nasce ligado, desliga por quadra
+  assert (v_court ->> 'enforce_proximity')::boolean, 'a verificação nasce ligada';
+
+  v := public.admin_upsert_court((v_court ->> 'id')::uuid, p_enforce_proximity => false);
+  assert not (v ->> 'enforce_proximity')::boolean, 'desligou a verificação';
+
+  v := public.admin_upsert_court((v_court ->> 'id')::uuid, p_enforce_proximity => true);
+  assert (v ->> 'enforce_proximity')::boolean, 'e liga de volta';
+
+  -- Mexer noutro campo não mexe no interruptor
+  v := public.admin_upsert_court((v_court ->> 'id')::uuid, p_enforce_proximity => false);
+  v := public.admin_upsert_court((v_court ->> 'id')::uuid, p_slot_minutes => 30::smallint);
+  assert not (v ->> 'enforce_proximity')::boolean,
+    'editar o slot não pode religar a verificação sozinho';
+  assert (v ->> 'slot_minutes')::int = 30, 'slot mudou';
+
   -- O painel enxerga o que foi criado
   v := public.admin_overview();
   assert (

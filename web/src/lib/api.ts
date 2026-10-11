@@ -5,7 +5,7 @@
  * 3G). O que precisa de segredo — validar o QR e a proximidade — passa
  * pelas Edge Functions.
  */
-import { callFunction, rpcError, supabase } from "./supabase";
+import { ApiError, callFunction, rpcError, supabase } from "./supabase";
 import type {
   AdminOverview,
   AdminUser,
@@ -169,6 +169,7 @@ export const adminUpsertCourt = (court: {
   isActive?: boolean;
   maxDistanceMeters?: number;
   gpsToleranceMeters?: number;
+  enforceProximity?: boolean;
 }) =>
   rpc("admin_upsert_court", {
     p_id: court.id ?? null,
@@ -184,10 +185,34 @@ export const adminUpsertCourt = (court: {
     p_is_active: court.isActive ?? null,
     p_max_distance_meters: court.maxDistanceMeters ?? null,
     p_gps_tolerance_meters: court.gpsToleranceMeters ?? null,
+    p_enforce_proximity: court.enforceProximity ?? null,
   });
 
-/** O conteúdo assinado que vai impresso na quadra. */
-export const courtQr = (courtId: string) =>
-  callFunction<CourtQr>(`admin-court-qr?courtId=${encodeURIComponent(courtId)}`, {
-    method: "GET",
-  });
+/**
+ * O conteúdo assinado que vai impresso na quadra.
+ *
+ * A função responde `{ courts: [...] }` mesmo quando se pede uma só —
+ * o mesmo endpoint lista todas quando não vem `courtId`. Tratar isso
+ * como objeto deixava nome, versão e URL `undefined`, e o QR não
+ * desenhava.
+ */
+export async function courtQr(courtId: string): Promise<CourtQr> {
+  const result = await callFunction<{ courts?: CourtQr[] } & Partial<CourtQr>>(
+    `admin-court-qr?courtId=${encodeURIComponent(courtId)}`,
+    { method: "GET" },
+  );
+
+  const found: Partial<CourtQr> | undefined = result.courts
+    ? result.courts.find((court) => court.courtId === courtId) ?? result.courts[0]
+    : result;
+
+  if (!found?.printUrl) {
+    throw new ApiError(
+      "COURT_QR_EMPTY",
+      "A função respondeu sem o código desta quadra. Confira se ela está ativa "
+        + "e se QR_SIGNING_SECRET e APP_BASE_URL estão definidos no Supabase.",
+    );
+  }
+
+  return found as CourtQr;
+}
