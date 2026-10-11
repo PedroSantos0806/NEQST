@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 
 /**
  * O Vite só entrega ao navegador variáveis com prefixo VITE_. Como na
- * Vercel elas acabaram nomeadas sem o prefixo, injetamos as três
+ * Vercel elas acabaram nomeadas sem o prefixo, injetamos uma a uma
  * explicitamente, aceitando os dois nomes.
  *
  * É uma lista fechada de propósito: ligar um prefixo genérico como
@@ -28,6 +28,14 @@ export default defineConfig(({ mode }) => {
       ),
       "import.meta.env.VITE_VAPID_PUBLIC_KEY": JSON.stringify(
         pick("VITE_VAPID_PUBLIC_KEY", "VAPID_PUBLIC_KEY"),
+      ),
+      // Mapa do cadastro de quadras. Em branco usa o OpenStreetMap;
+      // trocar por um provedor de satélite é só mexer aqui, sem código.
+      "import.meta.env.VITE_MAP_TILE_URL": JSON.stringify(
+        pick("VITE_MAP_TILE_URL", "MAP_TILE_URL"),
+      ),
+      "import.meta.env.VITE_MAP_TILE_ATTRIBUTION": JSON.stringify(
+        pick("VITE_MAP_TILE_ATTRIBUTION", "MAP_TILE_ATTRIBUTION"),
       ),
     },
     build: { outDir: "dist", sourcemap: true },

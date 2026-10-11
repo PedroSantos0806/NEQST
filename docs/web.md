@@ -19,12 +19,20 @@ resolve isso apontando o build para `web/`.
 | `VITE_SUPABASE_URL` (ou `SUPABASE_URL`) | `https://<project-ref>.supabase.co` | sim |
 | `VITE_SUPABASE_ANON_KEY` (ou `SUPABASE_ANON_KEY`) | a chave **anon public** | sim |
 | `VITE_VAPID_PUBLIC_KEY` (ou `VAPID_PUBLIC_KEY`) | chave pública do Web Push | não |
+| `VITE_MAP_TILE_URL` (ou `MAP_TILE_URL`) | azulejos do mapa do cadastro, no formato `.../{z}/{x}/{y}.png` | não |
+| `VITE_MAP_TILE_ATTRIBUTION` (ou `MAP_TILE_ATTRIBUTION`) | crédito exibido no canto do mapa | não |
+
+Sem as duas do mapa o cadastro usa o OpenStreetMap, que não pede
+chave — não há nada a configurar para o mapa funcionar. Elas existem
+para quem quiser trocar por imagem de satélite (ajuda a achar a quadra
+dentro do parque); nesse caso a atribuição do provedor é exigência de
+licença, não enfeite.
 
 O Vite só entrega ao navegador o que começa com `VITE_`. Como na Vercel
 elas acabaram nomeadas sem o prefixo, o
-[`web/vite.config.ts`](../web/vite.config.ts) injeta as três
-explicitamente aceitando os dois nomes — é uma lista fechada de três, e
-não um prefixo genérico, justamente para que uma eventual
+[`web/vite.config.ts`](../web/vite.config.ts) injeta uma a uma
+explicitamente aceitando os dois nomes — é uma lista fechada, e não um
+prefixo genérico, justamente para que uma eventual
 `SUPABASE_SERVICE_ROLE_KEY` no projeto jamais entre no bundle.
 
 Sem as duas primeiras o app abre numa tela explicando o que falta, em

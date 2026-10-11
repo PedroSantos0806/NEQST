@@ -220,6 +220,7 @@ export interface AdminCourt {
   court_number: number;
   surface: CourtSurface;
   surface_label: string;
+  address: string | null;
   latitude: number;
   longitude: number;
   slot_minutes: number;
@@ -240,6 +241,7 @@ export interface AdminPark {
   name: string;
   district: string | null;
   city: string | null;
+  address: string | null;
   latitude: number;
   longitude: number;
   tone_color: string | null;
