@@ -346,6 +346,7 @@ export function JoinSheet({
         <SwitchQueuePrompt
           courtName={court.my_state.court_name ?? null}
           owner={switchTo.owner}
+          viaPin={!switchTo.entryId}
           busy={busy}
           onCancel={() => setSwitchTo(null)}
           onConfirm={() => {
@@ -360,16 +361,22 @@ export function JoinSheet({
   );
 }
 
-/** O aviso de uma vaga por pessoa, com a saída na mesma tela. */
+/**
+ * O aviso de uma vaga por pessoa. Pelo PIN a entrada é na hora, então a
+ * saída também; no pedido, a pessoa só sai da fila atual quando for
+ * aceita — se for recusada, não perde nada.
+ */
 function SwitchQueuePrompt({
   courtName,
   owner,
+  viaPin,
   busy,
   onCancel,
   onConfirm,
 }: {
   courtName: string | null;
   owner: string;
+  viaPin: boolean;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -394,8 +401,10 @@ function SwitchQueuePrompt({
         <span className="bb" style={{ fontSize: 28, lineHeight: 1 }}>Você já está numa fila</span>
         <span style={{ fontSize: 14, lineHeight: 1.45 }}>
           Você está <strong>{courtName ? `na fila da ${courtName}` : "em outra fila"}</strong>. Para entrar na fila
-          {owner ? ` de ${owner}` : " deste grupo"}, você precisa sair da sua fila atual — e perde o
-          lugar que tinha lá.
+          {owner ? ` de ${owner}` : " deste grupo"}, você precisa sair da sua fila atual.{" "}
+          {viaPin
+            ? "Com o PIN a entrada é na hora, e você perde o lugar que tinha lá."
+            : "Você só sai dela quando aceitarem o seu pedido — até lá, seu lugar continua guardado."}
         </span>
         <button
           type="button"
@@ -404,7 +413,7 @@ function SwitchQueuePrompt({
           onClick={onConfirm}
           style={{ minHeight: 52, borderRadius: 10, fontSize: 15, fontWeight: 800, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)" }}
         >
-          Sair da minha fila e entrar
+          {viaPin ? "Sair da minha fila e entrar" : "Pedir para entrar"}
         </button>
         <button
           type="button"

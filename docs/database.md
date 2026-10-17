@@ -106,7 +106,9 @@ o PIN mora à parte e só sai pelas RPCs, para quem é do grupo.
 
 ### `queue_join_requests` (Sprint 4)
 Quem escaneou a quadra e pediu para entrar no grupo de alguém. O dono
-aceita ou recusa. Um pendente por pessoa (`queue_join_requests_one_pending_per_user`);
+aceita ou recusa. Se a pessoa estava em outra fila e confirmou o aviso
+(`leave_current`), ela continua lá enquanto espera e só sai quando for
+aceita. Um pendente por pessoa (`queue_join_requests_one_pending_per_user`);
 expira em 10 minutos, quando o grupo sai da fila ou quando a pessoa entra
 em outra vaga. O RLS deixa ler só quem pediu e quem está no grupo — é o
 que permite o Realtime avisar o dono sem expor o pedido ao parque.

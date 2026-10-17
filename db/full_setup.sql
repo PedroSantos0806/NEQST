@@ -6174,6 +6174,7 @@ create table if not exists public.queue_join_requests (
   user_id       uuid not null references auth.users (id) on delete cascade,
   scan_token_id uuid references public.scan_tokens (id) on delete set null,
   status        public.join_request_status not null default 'pending',
+  leave_current boolean not null default false,
   expires_at    timestamptz not null,
   decided_at    timestamptz,
   decided_by    uuid references auth.users (id) on delete set null,
@@ -6182,6 +6183,8 @@ create table if not exists public.queue_join_requests (
 
 comment on table public.queue_join_requests is
   'Quem escaneou a quadra e pediu para entrar no grupo de alguém. O dono do grupo aprova.';
+comment on column public.queue_join_requests.leave_current is
+  'Quem pediu estava em outra fila e confirmou que sai dela. Sai só quando for aceito.';
 
 -- Um pedido pendente por pessoa: pedir outro cancela o anterior.
 create unique index if not exists queue_join_requests_one_pending_per_user
@@ -6790,13 +6793,16 @@ $$;
 
 revoke all on function public.take_scan_token(text, text) from public, anon, authenticated;
 
--- Quem já está em outra fila precisa sair dela primeiro. Com
--- p_leave_current, sai aqui mesmo, na mesma transação — o app mostra o
--- aviso e repete a chamada com a confirmação.
+-- Quem já está em outra fila precisa sair dela para entrar no grupo. Sem
+-- p_leave_current, a chamada é recusada com o aviso (NQ014); o app
+-- pergunta e repete com a confirmação. Com p_leave_now = false só
+-- confere — é o pedido de entrada, que sai da fila antiga apenas quando
+-- for aceito.
 create or replace function public.free_player_for(
   p_user_id       uuid,
   p_target_entry  uuid,
-  p_leave_current boolean
+  p_leave_current boolean,
+  p_leave_now     boolean default true
 )
 returns void
 language plpgsql
@@ -6822,11 +6828,13 @@ begin
       using errcode = 'NQ014';
   end if;
 
-  perform public.leave_entry((v_state ->> 'entry_id')::uuid, p_user_id, 'switched_group');
+  if coalesce(p_leave_now, true) then
+    perform public.leave_entry((v_state ->> 'entry_id')::uuid, p_user_id, 'switched_group');
+  end if;
 end;
 $$;
 
-revoke all on function public.free_player_for(uuid, uuid, boolean) from public, anon, authenticated;
+revoke all on function public.free_player_for(uuid, uuid, boolean, boolean) from public, anon, authenticated;
 
 -- Coloca a pessoa no grupo (aprovada ou pelo PIN).
 create or replace function public.add_group_member(
@@ -6987,14 +6995,19 @@ begin
     raise exception 'Este grupo não está mais na fila' using errcode = 'NQ009';
   end if;
 
-  perform public.free_player_for(v_user, p_entry_id, p_leave_current);
+  -- Quem está em outra fila continua nela enquanto espera: só sai quando
+  -- for aceito. Aqui só se confere que confirmou o aviso.
+  perform public.free_player_for(v_user, p_entry_id, p_leave_current, false);
 
   update public.queue_join_requests
      set status = 'cancelled', decided_at = now()
    where status = 'pending' and user_id = v_user;
 
-  insert into public.queue_join_requests (entry_id, court_id, user_id, scan_token_id, expires_at)
-  values (p_entry_id, v_entry.court_id, v_user, v_token.id, now() + interval '10 minutes')
+  insert into public.queue_join_requests
+    (entry_id, court_id, user_id, scan_token_id, expires_at, leave_current)
+  values
+    (p_entry_id, v_entry.court_id, v_user, v_token.id, now() + interval '10 minutes',
+     public.player_state(v_user) ->> 'state' <> 'free')
   returning * into v_request;
 
   update public.scan_tokens
@@ -7078,7 +7091,13 @@ begin
     raise exception 'Este grupo não está mais na fila' using errcode = 'NQ009';
   end if;
 
-  -- Entre o pedido e a resposta a pessoa pode ter entrado em outra fila.
+  -- Quem pediu estando em outra fila e confirmou o aviso sai dela agora,
+  -- na mesma transação em que entra no grupo.
+  if public.player_state(v_request.user_id) ->> 'state' <> 'free' and v_request.leave_current then
+    perform public.free_player_for(v_request.user_id, v_entry.id, true);
+  end if;
+
+  -- Estava livre ao pedir e entrou em outra fila enquanto esperava.
   if public.player_state(v_request.user_id) ->> 'state' <> 'free' then
     update public.queue_join_requests
        set status = 'cancelled', decided_at = now(), decided_by = v_user

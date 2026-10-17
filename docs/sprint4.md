@@ -17,7 +17,7 @@ amigo em casa podia "estar na fila". Esta sprint fecha os dois pontos.
 | Quem guarda o lugar | **Uma pessoa** abre a vaga, mesmo sozinha |
 | Como os amigos entram | Escaneando a quadra e **pedindo para entrar** (o dono aceita) ou com o **PIN do grupo** |
 | Até quando | Até o fim do turno — quem chega atrasado entra com o jogo rolando |
-| Uma vaga por pessoa | Quem já está em outra fila vê "para entrar na fila do colega, saia da sua fila" e pode sair ali mesmo |
+| Uma vaga por pessoa | Quem já está em outra fila vê "para entrar na fila do colega, saia da sua fila". No pedido, só sai quando for aceito; no PIN, sai na hora |
 | Tamanho do grupo | **Sem limite** |
 | Tempo de quadra | **Fixo** (slot da quadra, 40 min): solo, dupla ou grupo de 8 |
 | Adversário vindo da fila | **Não existe.** Sem lado B, sem vencedor, sem "quem ganha fica" |
@@ -59,13 +59,18 @@ devolve `{ joined: false, attempts_left }`.
 
 Quem está em outra fila e tenta entrar no grupo do amigo recebe `NQ014`
 com o lugar de onde precisa sair. O app mostra o aviso; confirmado,
-repete a mesma chamada com `p_leave_current = true`, que sai da fila
-atual e entra (ou pede para entrar) **na mesma transação**. A chamada
-que falhou não gastou o scan, então ele ainda vale.
+repete a mesma chamada com `p_leave_current = true`. A chamada que
+falhou não gastou o scan, então ele ainda vale.
 
-Sair acontece no pedido, não na aprovação: quem pede já deixou a fila
-antiga. É o que o aviso diz, e evita alguém segurar duas vagas enquanto
-espera resposta.
+- **Pelo pedido**, a pessoa **continua na fila atual enquanto espera** e
+  só sai dela quando o dono aceita — na mesma transação em que entra no
+  grupo (`queue_join_requests.leave_current`). Recusado ou expirado, ela
+  não perdeu nada.
+- **Pelo PIN**, a entrada é na hora, então a saída também.
+
+Enquanto o pedido espera, a pessoa ocupa uma vaga só (a antiga); a nova
+só passa a valer com a aprovação. Se ela abrir outra vaga nesse meio
+tempo, o pedido é cancelado.
 
 ## O turno
 

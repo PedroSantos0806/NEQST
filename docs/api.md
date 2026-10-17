@@ -481,8 +481,9 @@ Toda entrada num grupo exige um scan novo da quadra do grupo (o mesmo
 await supabase.rpc("request_join", { p_scan_token: token, p_entry_id: entryId });
 
 // Já está em outra fila? Volta NQ014 com "saia da sua fila atual (…)".
-// O app pergunta; confirmado, repete com p_leave_current — sai e pede
-// na mesma transação, e o scan (que não foi gasto) ainda vale.
+// O app pergunta; confirmado, repete com p_leave_current (o scan, que
+// não foi gasto, ainda vale). A pessoa continua na fila atual enquanto
+// espera e só sai dela quando o dono aceitar.
 await supabase.rpc("request_join", { p_scan_token: token, p_entry_id: entryId, p_leave_current: true });
 
 // O dono aceita ou recusa
@@ -491,7 +492,8 @@ await supabase.rpc("decide_join_request", { p_request_id: id, p_approve: true })
 // Quem pediu desiste
 await supabase.rpc("cancel_join_request", { p_request_id: id });
 
-// Entrar direto com o PIN do grupo (aceita p_leave_current também)
+// Entrar direto com o PIN do grupo. Com p_leave_current, sai da fila
+// atual na hora — a entrada é imediata.
 const { data } = await supabase.rpc("join_with_pin", { p_scan_token: token, p_pin: "4821" });
 // PIN errado NÃO é erro — a tentativa precisa ficar gravada:
 // { joined: false, code: "PIN_INVALID", message, attempts_left }

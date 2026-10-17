@@ -173,7 +173,7 @@ export function Court() {
       setNotice(
         outcome === "joined"
           ? "Você entrou no grupo."
-          : "Pedido enviado. Quando quem abriu a vaga aceitar, você entra no grupo.",
+          : "Pedido enviado. Quando quem abriu a vaga aceitar, você entra no grupo — se estiver em outra fila, só sai dela nessa hora.",
       );
       return;
     }

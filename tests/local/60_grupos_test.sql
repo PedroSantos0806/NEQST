@@ -243,16 +243,61 @@ begin
     assert v_msg like '%saia da sua fila atual%quadra 02%', format('o aviso diz de onde sair: %s', v_msg);
   end;
 
-  -- Confirmou o aviso: sai da fila atual e pede, numa chamada só. A
-  -- exceção acima desfez tudo, então o mesmo scan ainda vale.
+  -- Confirmou o aviso e pediu. A exceção acima desfez tudo, então o
+  -- mesmo scan ainda vale. Enquanto espera, continua na fila dele.
   v := public.request_join('g-caio-2', pg_temp.ana_entry(), true);
   assert v ->> 'status' = 'pending', format('pedido feito: %s', v);
-  assert (select status from public.queue_entries where id = v_old) = 'cancelled',
-    'a vaga que era só dele sumiu';
+  assert (select status from public.queue_entries where id = v_old) in ('waiting', 'ready'),
+    'esperando resposta, o Caio não perde a vaga dele';
+  assert (public.player_state('c1000000-0000-0000-0000-0000000000c1') ->> 'entry_id')::uuid = v_old,
+    'continua na Quadra 02';
+
+  -- Recusado: nada muda para ele
+  perform pg_temp.as_user('a1000000-0000-0000-0000-0000000000a1');
+  perform public.decide_join_request((v ->> 'request_id')::uuid, false);
+  assert (select status from public.queue_entries where id = v_old) in ('waiting', 'ready'),
+    'recusado, segue na fila em que estava';
+
+  -- Pede de novo e é aceito: só agora sai da fila antiga
+  perform pg_temp.as_user('c1000000-0000-0000-0000-0000000000c1');
+  perform pg_temp.scan('c1000000-0000-0000-0000-0000000000c1', 'a1a10000-0000-0000-0000-0000000000a1', 'g-caio-2b');
+  v := public.request_join('g-caio-2b', pg_temp.ana_entry(), true);
 
   perform pg_temp.as_user('a1000000-0000-0000-0000-0000000000a1');
-  perform public.decide_join_request((v ->> 'request_id')::uuid, true);
+  assert public.decide_join_request((v ->> 'request_id')::uuid, true) ->> 'status' = 'approved', 'aceito';
+  assert (select status from public.queue_entries where id = v_old) = 'cancelled',
+    'aceito, a vaga que era só dele sumiu';
+  assert (public.player_state('c1000000-0000-0000-0000-0000000000c1') ->> 'entry_id')::uuid = pg_temp.ana_entry(),
+    'o Caio está no grupo da Ana';
   assert jsonb_array_length(public.my_group(pg_temp.ana_entry()) -> 'players') = 3, 'grupo com 3';
+end $$;
+
+-- Pediu estando livre e abriu outra vaga enquanto esperava: o pedido
+-- morre ali, e aceitar depois não o arranca da vaga que escolheu.
+do $$
+declare v jsonb;
+begin
+  perform pg_temp.as_user('91000000-0000-0000-0000-000000000091');
+  perform pg_temp.scan('91000000-0000-0000-0000-000000000091', 'a1a10000-0000-0000-0000-0000000000a1', 'g-gabi-0');
+  v := public.request_join('g-gabi-0', pg_temp.ana_entry());
+  perform pg_temp.scan('91000000-0000-0000-0000-000000000091', 'b1b10000-0000-0000-0000-0000000000b1', 'g-gabi-q2');
+  perform public.join_queue('g-gabi-q2');
+
+  assert (select status from public.queue_join_requests
+          where id = (v ->> 'request_id')::uuid) = 'cancelled', 'abrir vaga cancela o pedido';
+
+  perform pg_temp.as_user('a1000000-0000-0000-0000-0000000000a1');
+  begin
+    perform public.decide_join_request((v ->> 'request_id')::uuid, true);
+    assert false, 'pedido cancelado não pode ser aceito';
+  exception when others then
+    assert sqlstate = 'NQ027', format('esperava NQ027, obtive %s', sqlstate);
+  end;
+  assert (public.player_state('91000000-0000-0000-0000-000000000091') ->> 'court_name') = 'Quadra 02',
+    'Gabi segue na fila que escolheu';
+
+  perform pg_temp.as_user('91000000-0000-0000-0000-000000000091');
+  perform public.leave_queue((public.player_state('91000000-0000-0000-0000-000000000091') ->> 'entry_id')::uuid);
 end $$;
 
 -- =====================================================================
@@ -489,7 +534,8 @@ begin
           where created_by = '71000000-0000-0000-0000-000000000071'
             and court_id = 'a1a10000-0000-0000-0000-0000000000a1') = 'ready', 'Ivo chamado';
   assert (select status from public.queue_join_requests
-          where user_id = '91000000-0000-0000-0000-000000000091') = 'expired',
+          where user_id = '91000000-0000-0000-0000-000000000091'
+          order by created_at desc limit 1) = 'expired',
     'o pedido da Gabi morre com o grupo';
 end $$;
 
