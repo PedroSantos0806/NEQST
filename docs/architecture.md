@@ -46,14 +46,14 @@ instável que a sprint chama atenção.
   │                          ├─ insere scan_token ─►│                    │
   │◄── scanToken (30s) ──────┤                      │                    │
   │                                                                      │
-  │  scanToken + modo + parceiro                                         │
+  │  scanToken                                                           │
   ├─────────────────────────────────────────────────────────────────────►│
   │                                                  ┌── join_queue() ◄──┤
   │                                                  │  token válido?    │
   │                                                  │  já está na fila? │
-  │                                                  │  cria time        │
+  │                                                  │  abre a vaga      │
   │                                                  │  consome token    │
-  │◄──────────── posição, times na frente, espera ───┴───────────────────┤
+  │◄──────────── posição, grupos na frente, espera ──┴───────────────────┤
   │                                                                      │
   │◄═══ Realtime: todos na quadra recebem o novo estado ═════════════════╡
 ```

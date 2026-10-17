@@ -304,7 +304,8 @@ function CourtRow({
       </div>
 
       <span style={{ fontSize: 12, color: "var(--green)" }}>
-        Slot de {court.slot_minutes} min · {court.queue_length} na fila
+        Slot de {court.slot_minutes} min · tolerância {Math.round((court.call_window_seconds ?? 120) / 6) / 10} min
+        · {court.queue_length} na fila
         {court.has_nfc_tag ? " · NFC" : ""}
         {typeof court.max_distance_meters === "number"
           && court.max_distance_meters !== 1000
@@ -574,6 +575,7 @@ function CourtForm({
   const [name, setName] = useState(court?.name ?? "");
   const [surface, setSurface] = useState(court?.surface ?? "clay");
   const [slot, setSlot] = useState(String(court?.slot_minutes ?? 40));
+  const [tolerance, setTolerance] = useState(String((court?.call_window_seconds ?? 120) / 60));
   const [nfc, setNfc] = useState(court?.has_nfc_tag ?? false);
   const [active, setActive] = useState(court?.is_active ?? true);
   const [radius, setRadius] = useState(String(court?.max_distance_meters ?? 1000));
@@ -591,6 +593,7 @@ function CourtForm({
         name: name || undefined,
         surface,
         slotMinutes: Number(slot) || 40,
+        callWindowSeconds: Math.round((Number(tolerance.replace(",", ".")) || 2) * 60),
         hasNfcTag: nfc,
         isActive: active,
         maxDistanceMeters: Number(radius) || 1000,
@@ -645,6 +648,13 @@ function CourtForm({
 
       <Field label="Slot de jogo (minutos)" hint="É o relógio que dispara a próxima da fila.">
         <input value={slot} onChange={(e) => setSlot(e.target.value)} inputMode="numeric" style={field} />
+      </Field>
+
+      <Field
+        label="Tolerância do check-in (minutos)"
+        hint="Depois de chamado, o grupo tem esse tempo para escanear a quadra. Passou, a vez é do próximo. Padrão: 2."
+      >
+        <input value={tolerance} onChange={(e) => setTolerance(e.target.value)} inputMode="decimal" style={field} />
       </Field>
 
       <Toggle label="Exigir estar perto da quadra" checked={checkDistance} onChange={setCheckDistance} />

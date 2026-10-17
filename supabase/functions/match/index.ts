@@ -1,26 +1,21 @@
 /**
- * Resultado da partida (Sprint 3).
+ * Turno de um grupo na quadra (Sprint 3, revisto na Sprint 4).
  *
- * POST /functions/v1/match?action=result
- *   { matchId: string, winner: "a" | "b" }
+ * POST /functions/v1/match
+ *   { matchId: string }
  *
- * Quem ganha fica: o lado vencedor segue em quadra como mandante e o
- * próximo time da fila entra como desafiante. Qualquer jogador dos dois
- * lados pode reportar — num parque público não há árbitro.
- *
- * Se ninguém reportar até o slot acabar, a rotina de manutenção encerra
- * a partida sem vencedor e a quadra fica sem mandante.
+ * O grupo devolve a quadra antes do fim do turno. Não há vencedor nem
+ * "quem ganha fica": o grupo sai e o próximo da fila é chamado. Se
+ * ninguém encerrar, o turno acaba sozinho no fim do slot.
  *
  * GET /functions/v1/match?matchId=<uuid>
- *   Placar de uma partida (para o app conferir depois de reconectar).
+ *   O turno (para o app conferir depois de reconectar).
  */
 import { ApiError, json, postgrestError, readJson, serve } from "../_shared/http.ts";
 import { requireUser, serviceClient } from "../_shared/supabase.ts";
-import type { MatchSide } from "../_shared/types.ts";
 
-interface ResultRequest {
+interface FinishRequest {
   matchId?: string;
-  winner?: MatchSide;
 }
 
 serve(async (req) => {
@@ -41,17 +36,11 @@ serve(async (req) => {
   }
 
   const { client } = await requireUser(req);
-  const body = await readJson<ResultRequest>(req);
+  const body = await readJson<FinishRequest>(req);
 
   if (!body.matchId) throw new ApiError("MATCH_ID_REQUIRED", "Informe matchId.", 400);
-  if (body.winner !== "a" && body.winner !== "b") {
-    throw new ApiError("INVALID_WINNER", "winner deve ser 'a' ou 'b'.", 400);
-  }
 
-  const { data, error } = await client.rpc("report_match_result", {
-    p_match_id: body.matchId,
-    p_winner: body.winner,
-  });
+  const { data, error } = await client.rpc("finish_my_turn", { p_match_id: body.matchId });
 
   if (error) postgrestError(error);
 

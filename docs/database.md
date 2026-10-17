@@ -16,7 +16,9 @@ auth.users ──1:1── profiles                    ▼
                       │         ▼                        │
                       │    queue_entries ───────────────┘
                       │         │   │
-                      │         │   └──< matches (lado A / lado B)
+                      │         │   ├──< matches (o turno do grupo)
+                      │         │   ├──< queue_join_requests
+                      │         │   └──1 queue_entry_pins
                       ├──< push_tokens
                       ├──< web_push_subscriptions
                       └──< notification_outbox
@@ -30,7 +32,7 @@ auth.users ──1:1── profiles                    ▼
 Perfil público, criado automaticamente pelo trigger `on_auth_user_created`
 a cada signup — e-mail/senha, Google ou Apple. O `username` é derivado do
 e-mail (ou do nome do provedor SSO) com sufixo numérico em caso de colisão,
-e é o identificador usado para convidar o parceiro de dupla.
+e é o identificador público do jogador.
 
 `role` (`player` / `staff` / `admin`) governa as permissões: só `staff` e
 `admin` operam a quadra; só `admin` gera e rotaciona QR Codes.
@@ -49,10 +51,10 @@ proximidade:
 |---|---|
 | `max_distance_meters` | Raio de entrada — padrão 1000 m (US-02) |
 | `gps_tolerance_meters` | Margem extra para GPS impreciso — padrão 200 m |
-| `slot_minutes` | **Limite** de uma partida (padrão 40, faixa 20-90) |
+| `slot_minutes` | **Limite** do turno de um grupo (padrão 40, faixa 20-90) |
 | `average_match_minutes` | Espelha o slot por trigger (compatibilidade) |
-| `call_window_seconds` | Prazo do check-in depois de ser chamado (padrão 300) |
-| `holder_entry_id` | Time que venceu e segue em quadra |
+| `call_window_seconds` | Tolerância do check-in depois de chamado (padrão 120, faixa 60-1800; o admin ajusta) |
+| `holder_entry_id` | Legado do "quem ganha fica" (Sprint 3) — sempre nulo desde a Sprint 4 |
 | `has_qr_code` / `has_nfc_tag` | Quais formas de check-in a quadra oferece |
 | `status` | `available` / `in_game` / `unavailable` |
 | `qr_secret_version` | Permite rotacionar o QR de uma quadra sem afetar as demais |
@@ -62,20 +64,29 @@ Prova de presença de uso único, TTL de 30s. Guarda só o SHA-256 do token,
 mais a distância e as coordenadas usadas na validação — útil para auditar
 tentativas suspeitas.
 
-### `queue_entries` + `queue_entry_members` (US-03)
-Um *time* na fila e seus jogadores. Individual = 1 membro, dupla = 2.
+### `queue_entries` + `queue_entry_members` (US-03, revisto na Sprint 4)
+Uma *vaga* na fila e o grupo que joga nela — de qualquer tamanho: dois
+no simples, quatro nas duplas, cinco revezando. O turno é fixo, quantos
+forem. `queue_entries.mode` é legado e não decide nada.
+
+Em cada membro: `joined_via` (`owner` abriu a vaga, `approval` foi
+aceito, `pin` usou o PIN), `checked_in_at` (escaneou a quadra para
+jogar) e `left_at` (saiu com o turno rolando — quem sai antes do turno
+deixa de fazer parte do grupo). Saindo o dono (`role = owner`), o membro
+mais antigo herda; a vaga só some quando sai o último.
 
 Garantias no próprio schema:
 
 - `matches_one_live_per_court` — no máximo uma partida em andamento por
   quadra.
 - `queue_entry_members_one_active_per_player` — um jogador em **uma fila
-  só, em qualquer quadra de qualquer parque** (inclusive como parceiro de
-  dupla). O protótipo recusa a segunda com "Você já está na fila da
-  Quadra 04".
-- `queue_entry_members_team_size` — dupla nunca passa de 2 jogadores.
-- `queue_entries_sync_members` — encerrado o time, seus jogadores voltam
+  só, em qualquer quadra de qualquer parque**, seja abrindo a vaga ou no
+  grupo de alguém. Para entrar no grupo do amigo, quem já está numa fila
+  sai dela primeiro.
+- `queue_entries_sync_members` — encerrada a vaga, seus jogadores voltam
   a poder entrar na fila.
+
+A Sprint 4 removeu `queue_entry_members_team_size` (o limite de 2).
 
 Ordem da fila = `queue_entries.queue_number`, uma coluna *identity*
 estritamente crescente, exposta pela view `queue_positions`. Não usamos
@@ -83,19 +94,41 @@ estritamente crescente, exposta pela view `queue_positions`. Não usamos
 criados na mesma transação empatariam e a posição ficaria indefinida.
 `joined_at` usa `clock_timestamp()` e serve para exibição e estimativas.
 
+### `queue_entry_pins` (Sprint 4)
+O PIN de 4 dígitos de cada vaga, único entre as vagas ativas da quadra.
+Quem tem o PIN e escaneia a quadra entra no grupo sem esperar
+aprovação — inclusive com o turno rolando. Sem nenhum grant para o
+cliente: `queue_entries` é legível por todos e passa pelo Realtime, então
+o PIN mora à parte e só sai pelas RPCs, para quem é do grupo.
+
+`queue_pin_attempts` registra cada tentativa. Cada uma gasta um scan
+(é preciso estar na quadra), e 5 erros em 15 minutos travam (`NQ028`).
+
+### `queue_join_requests` (Sprint 4)
+Quem escaneou a quadra e pediu para entrar no grupo de alguém. O dono
+aceita ou recusa. Um pendente por pessoa (`queue_join_requests_one_pending_per_user`);
+expira em 10 minutos, quando o grupo sai da fila ou quando a pessoa entra
+em outra vaga. O RLS deixa ler só quem pediu e quem está no grupo — é o
+que permite o Realtime avisar o dono sem expor o pedido ao parque.
+
+Sem esse passo, qualquer pessoa que escaneasse o QR escolheria o grupo do
+1º da fila e passaria na frente de todo mundo.
+
 ### `push_tokens` / `notification_outbox` (US-03)
 Devices Expo por usuário e a fila de pushes a enviar. O outbox é
 transacional: o gatilho enfileira junto com a mudança da fila, e o worker
 entrega depois — se a Expo estiver fora do ar, nada se perde.
 
 O índice `notification_outbox_unique_event (entry_id, user_id, type)`
-garante que o "Prepare-se!" saia **uma vez só** por time, mesmo com o
-gatilho rodando a cada evento da fila.
+garante que o "Prepare-se!" saia **uma vez só** por pessoa do grupo,
+mesmo com o gatilho rodando a cada evento da fila. Os pushes do pedido
+de entrada (`group_join_request`, `group_join_approved`) vão sem
+`entry_id`, para dois pedidos ao mesmo dono não se engolirem.
 
 ### `court_reviews` (Sprint 2)
 Nota de 1 a 5 e comentário, uma por jogador por quadra (`unique (court_id,
 user_id)`), editável. `rate_court` exige partida concluída naquela quadra
-— o parceiro de dupla conta como quem jogou.
+— todo mundo que estava no grupo conta como quem jogou.
 
 `courts.rating_avg` e `courts.rating_count` são mantidos por trigger, para
 a lista de quadras não precisar de join.
@@ -121,15 +154,17 @@ Os limites de ocupação ficam na quadra (`busy_threshold`,
 `full_threshold`), não no código: 2 times na fila é tranquilo num clube e
 cheio numa quadra pública.
 
-### `matches` (Sprint 3)
-Uma partida: lado A (desafiante, veio da fila) contra lado B (mandante).
-`side_b_entry_id` nulo é o **"Adversário livre"** — a quadra estava vazia
-e o outro lado segue aberto.
+### `matches` (Sprint 3, revisto na Sprint 4)
+O turno de um grupo na quadra: `side_a_entry_id` é a vaga. Não há
+adversário vindo da fila nem vencedor — `side_b_entry_id`,
+`winner_side` e `courts.holder_entry_id` ficaram do "quem ganha fica" da
+Sprint 3 e não são mais preenchidos.
 
-`expires_at` nasce de `started_at + slot_minutes`. Chegando lá,
-`advance_expired_queues` encerra sem vencedor e a fila anda. Com
-vencedor, `courts.holder_entry_id` passa a apontar para ele: **quem ganha
-fica**.
+`expires_at` nasce de `started_at + slot_minutes` e não muda: quem chega
+atrasado entra com o turno rolando, e o relógio não para. Chegando lá,
+o turno encerra (`slot_expired`) e a fila anda. O grupo também pode
+devolver a quadra antes (`finished_by_group`), e se todos saem o turno
+acaba (`abandoned`).
 
 Um índice único garante uma partida ao vivo por quadra. O índice da
 Sprint 1 (`queue_entries_one_playing_per_court`) foi removido: ele
@@ -149,8 +184,12 @@ entrega em navegador — ver [`plataformas.md`](plataformas.md).
 
 | Função | Quem chama | O que faz |
 |---|---|---|
-| `join_queue(scan_token, mode, partner)` | jogador | Valida presença, monta o time, entra na fila |
-| `leave_queue(entry_id, reason)` | jogador | Sai da fila |
+| `join_queue(scan_token)` | jogador | Valida presença e abre uma vaga (pode estar sozinho) |
+| `request_join(scan_token, entry_id, leave_current)` | jogador | Pede para entrar no grupo de alguém (Sprint 4) |
+| `decide_join_request(request_id, approve)` | dono do grupo | Aceita ou recusa o pedido (Sprint 4) |
+| `cancel_join_request(request_id)` | jogador | Desiste do pedido (Sprint 4) |
+| `join_with_pin(scan_token, pin, leave_current)` | jogador | Entra com o PIN do grupo (Sprint 4) |
+| `leave_queue(entry_id, reason)` | jogador | Sai do grupo; a vaga fica com quem ficou |
 | `court_queue(court_id)` | app | Estado completo da quadra + fila |
 | `queue_entry_state(entry_id)` | app | Posição, times na frente, espera estimada |
 | `my_active_entries()` | app | Times ativos do usuário (reconexão) |
@@ -166,10 +205,11 @@ entrega em navegador — ver [`plataformas.md`](plataformas.md).
 | `moderate_court_photo` / `set_primary_court_photo` / `pending_court_photos` | staff | Moderação (Sprint 2) |
 | `capture_occupancy_snapshots` | cron | Amostra da ocupação (Sprint 2) |
 | `parks_overview` / `park_screen` / `court_screen` / `my_queue_state` | app | Uma por tela (Sprint 3) |
-| `check_in_and_start` / `join_open_side` | jogador | Liberar o placar e iniciar (Sprint 3) |
-| `report_match_result` | jogador | Quem ganhou — aplica o "quem ganha fica" |
-| `search_partners` / `update_my_profile` | app | Parceiro e raquete (Sprint 3) |
-| `advance_expired_queues` | cron | Slot estourado e chamada não atendida |
+| `check_in_and_start` | jogador | Um check-in inicia o turno; quem chega depois registra presença |
+| `finish_my_turn(match_id)` | grupo | Devolve a quadra antes do fim do turno (Sprint 4) |
+| `my_group(entry_id)` / `my_join_request()` | app | PIN, membros e pedidos — só para o grupo (Sprint 4) |
+| `search_partners` / `update_my_profile` | app | Lista de jogadores e raquete (Sprint 3) |
+| `advance_expired_queues` / `advance_court(court_id)` | cron / interno | Turno vencido e chamada não atendida |
 | `court_label` / `initials_of` / `short_name_of` | interno | Rótulos do jeito que o app mostra |
 
 Todas são `SECURITY DEFINER` com `search_path = ''` — cada objeto é
@@ -185,6 +225,8 @@ RLS ativo em todas as tabelas. O resumo:
 | `courts` | leitura das ativas | leitura; escrita só staff/admin |
 | `profiles` | — | leitura de todos; escreve só o próprio (sem trocar `role`) |
 | `queue_entries` / `queue_entry_members` | — | **somente leitura** |
+| `queue_join_requests` | — | lê quem pediu e quem está no grupo |
+| `queue_entry_pins` / `queue_pin_attempts` | — | — (só pelas RPCs) |
 | `scan_tokens` | — | lê apenas os próprios |
 | `push_tokens` | — | CRUD apenas dos próprios devices |
 | `notification_outbox` | — | lê apenas as próprias notificações |
@@ -203,14 +245,20 @@ remover o time de outra pessoa.
 
 ## Realtime
 
-`queue_entries`, `queue_entry_members`, `courts` e `matches` estão na
-publicação `supabase_realtime` com `replica identity full`. O placar da
+`queue_entries`, `queue_entry_members`, `queue_join_requests`, `courts` e
+`matches` estão na publicação `supabase_realtime` com `replica identity full`. O placar da
 quadra é ao vivo: assine `matches` filtrando por `court_id`. O app filtra por
 `court_id` — ver [`api.md`](api.md#tempo-real-us-03).
 
 ## Rotinas agendadas
 
-`run_maintenance()` (a cada 15 min) expira times parados há mais de 3h,
+`advance_expired_queues()` (a cada minuto) encerra turnos vencidos e
+passa a vez de quem não fez check-in na tolerância. Com 2 minutos de
+tolerância, esperar a rotina de 15 em 15 deixaria a quadra parada; por
+isso o check-in e a entrada na fila também andam a fila daquela quadra
+na hora (`advance_court`).
+
+`run_maintenance()` (a cada 15 min) expira vagas paradas há mais de 3h,
 limpa scan tokens antigos, captura os snapshots de ocupação e descarta
 notificações com mais de 30 dias e snapshots com mais de 90 dias.
 `dispatch-notifications` roda a cada ~10s. Agendamento em

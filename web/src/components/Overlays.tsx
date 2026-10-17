@@ -142,14 +142,14 @@ export function CallOverlay({
   courtName,
   parkName,
   secondsLeft,
-  modeLabel,
+  groupLabel,
   onCheckIn,
   onLater,
 }: {
   courtName: string;
   parkName: string;
   secondsLeft: number;
-  modeLabel: string;
+  groupLabel: string;
   onCheckIn: () => void;
   onLater: () => void;
 }) {
@@ -186,19 +186,19 @@ export function CallOverlay({
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <span className="bb" style={{ fontSize: 64, lineHeight: 0.86 }}>{courtName} liberada</span>
         <span style={{ fontSize: 15, lineHeight: 1.45 }}>
-          A partida anterior acabou e você é o 1º da fila. Vá até a quadra e faça o check-in por
-          QR ou NFC para iniciar o seu jogo.
+          O turno anterior acabou e o seu grupo é o 1º da fila. Basta um de vocês fazer o
+          check-in por QR ou NFC para o turno começar — quem chegar depois entra com o PIN.
         </span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", border: "1.5px solid rgba(241,236,239,.35)", borderRadius: 10 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: 12, borderRight: "1.5px solid rgba(241,236,239,.35)" }}>
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", color: "var(--mauve)" }}>TEMPO PARA CONFIRMAR</span>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", color: "var(--mauve)" }}>TOLERÂNCIA</span>
           <span className="bb" role="timer" style={{ fontSize: 44, lineHeight: 1 }}>{mmss(secondsLeft)}</span>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: 12 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", color: "var(--mauve)" }}>MODALIDADE</span>
-          <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.3 }}>{modeLabel}</span>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", color: "var(--mauve)" }}>GRUPO</span>
+          <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.3 }}>{groupLabel}</span>
         </div>
       </div>
 

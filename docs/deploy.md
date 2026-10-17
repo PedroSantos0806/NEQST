@@ -168,6 +168,11 @@ select cron.schedule(
 
 select cron.schedule('neqst-maintenance', '*/15 * * * *',
                      $$ select public.run_maintenance(); $$);
+
+-- Sprint 4: a tolerância do check-in é de 2 minutos. A fila precisa andar
+-- de minuto em minuto, não de 15 em 15.
+select cron.schedule('neqst-advance-queues', '* * * * *',
+                     $$ select public.advance_expired_queues(); $$);
 ```
 
 Conferir: `select * from cron.job;` e `select * from cron.job_run_details order by start_time desc limit 20;`

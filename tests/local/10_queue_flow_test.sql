@@ -92,7 +92,8 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
--- Bruno entra como dupla com Caio
+-- Bruno abre a vaga e Caio, na quadra, entra no grupo dele
+-- (Sprint 4: o parceiro escaneia a quadra e o dono aprova)
 -- ---------------------------------------------------------------------
 do $$ begin perform pg_temp.issue_scan_token('22222222-2222-2222-2222-222222222222', 'tok-bruno'); end $$;
 set local "request.jwt.claim.sub" = '22222222-2222-2222-2222-222222222222';
@@ -100,11 +101,37 @@ set local "request.jwt.claim.sub" = '22222222-2222-2222-2222-222222222222';
 do $$
 declare v jsonb;
 begin
-  v := public.join_queue('tok-bruno', 'double', '@caio');
+  v := public.join_queue('tok-bruno', 'single');
   assert (v ->> 'position')::int = 2,    format('Bruno deveria ser o 2º: %s', v);
   assert (v ->> 'teams_ahead')::int = 1, format('Bruno deveria ter 1 time na frente: %s', v);
   assert (v ->> 'estimated_wait_minutes')::int = 20, format('espera deveria ser 20 min: %s', v);
-  assert jsonb_array_length(v -> 'players') = 2, 'dupla deveria ter 2 jogadores';
+  assert jsonb_array_length(v -> 'players') = 1, 'Bruno abriu a vaga sozinho';
+end $$;
+
+do $$ begin perform pg_temp.issue_scan_token('33333333-3333-3333-3333-333333333333', 'tok-caio-pede'); end $$;
+set local "request.jwt.claim.sub" = '33333333-3333-3333-3333-333333333333';
+
+do $$
+declare v_entry uuid; v jsonb;
+begin
+  select id into v_entry from public.queue_entries
+  where created_by = '22222222-2222-2222-2222-222222222222';
+  v := public.request_join('tok-caio-pede', v_entry);
+  assert v ->> 'status' = 'pending', format('pedido do Caio: %s', v);
+end $$;
+
+set local "request.jwt.claim.sub" = '22222222-2222-2222-2222-222222222222';
+do $$
+declare v_request uuid; v jsonb; v_entry uuid;
+begin
+  select id, entry_id into v_request, v_entry from public.queue_join_requests
+  where user_id = '33333333-3333-3333-3333-333333333333' and status = 'pending';
+  v := public.decide_join_request(v_request, true);
+  assert v ->> 'status' = 'approved', format('Bruno aceita o Caio: %s', v);
+
+  v := public.queue_entry_state(v_entry);
+  assert jsonb_array_length(v -> 'players') = 2, format('a vaga agora é da dupla: %s', v);
+  assert (v ->> 'position')::int = 2, 'a posição continua a do Bruno';
 end $$;
 
 -- Caio já está na fila (como parceiro) e não pode formar outro time
@@ -123,17 +150,18 @@ begin
   end;
 end $$;
 
--- Parceiro inexistente
-do $$ begin perform pg_temp.issue_scan_token('33333333-3333-3333-3333-333333333333', 'tok-caio-2'); end $$;
+-- Parceiro pelo @ acabou: não provava que a pessoa estava na quadra
+do $$ begin perform pg_temp.issue_scan_token('11111111-1111-1111-1111-111111111111', 'tok-ana-dupla'); end $$;
+set local "request.jwt.claim.sub" = '11111111-1111-1111-1111-111111111111';
 do $$
 declare v_code text;
 begin
   begin
-    perform public.join_queue('tok-caio-2', 'double', 'ninguem@example.com');
-    assert false, 'parceiro inexistente deveria falhar';
+    perform public.join_queue('tok-ana-dupla', 'double', '@caio');
+    assert false, 'parceiro pelo @ deveria ser recusado';
   exception when others then
     get stacked diagnostics v_code = returned_sqlstate;
-    assert v_code in ('NQ004', 'NQ005'), format('esperava NQ005, obtive %s', v_code);
+    assert v_code = 'NQ029', format('esperava NQ029, obtive %s', v_code);
   end;
 end $$;
 
@@ -180,7 +208,8 @@ begin
 
   v := public.start_match(v_entry);
   assert (v ->> 'is_live')::boolean, format('partida deveria estar em andamento: %s', v);
-  assert (v -> 'side_b' ->> 'open')::boolean, 'sem mandante, o lado B fica aberto';
+  assert (v ->> 'entry_id')::uuid = v_entry, 'o turno é do grupo da Ana';
+  assert jsonb_array_length(v -> 'players') = 1, 'sem adversário: só o grupo da Ana';
 
   select status into v_status from public.courts
   where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';

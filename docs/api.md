@@ -79,17 +79,20 @@ habilita `join-queue`. Guarde apenas em memória.
 
 ---
 
-## POST /join-queue — entrar na fila (US-03)
+## POST /join-queue — abrir uma vaga na fila (US-03, revisto na Sprint 4)
 
 ```json
-{ "scanToken": "s3Kf9...", "mode": "single" }
+{ "scanToken": "s3Kf9..." }
 ```
 
-```json
-{ "scanToken": "s3Kf9...", "mode": "double", "partner": "@bruno" }
-```
+Quem abre a vaga pode estar sozinho e guarda o lugar do grupo. Os
+amigos entram **nessa mesma vaga** depois, cada um escaneando a quadra:
+pedindo para entrar (`request_join`, o dono aceita) ou com o PIN do
+grupo (`join_with_pin`) — ver [RPCs da Sprint 4](#rpcs-da-sprint-4--grupos).
 
-`partner` aceita `@username`, `username` ou e-mail.
+`mode` ainda é aceito e ignorado. `partner` é recusado com
+`PARTNER_MUST_SCAN`: o parceiro pelo @ não provava que a pessoa estava na
+quadra.
 
 **201**
 
@@ -98,16 +101,14 @@ habilita `join-queue`. Guarde apenas em memória.
   "entry_id": "9f1c...",
   "court_id": "7c9e...",
   "court_name": "Quadra Central",
-  "mode": "double",
   "status": "waiting",
   "joined_at": "2026-09-23T18:30:12.000Z",
   "started_at": null,
   "position": 2,
   "teams_ahead": 1,
-  "estimated_wait_minutes": 20,
+  "estimated_wait_minutes": 40,
   "players": [
-    { "user_id": "...", "role": "owner",   "username": "ana",   "full_name": "Ana Souza",  "avatar_url": null },
-    { "user_id": "...", "role": "partner", "username": "bruno", "full_name": "Bruno Lima", "avatar_url": null }
+    { "user_id": "...", "role": "owner", "username": "ana", "full_name": "Ana Souza", "avatar_url": null }
   ]
 }
 ```
@@ -116,64 +117,65 @@ habilita `join-queue`. Guarde apenas em memória.
 |---|---|---|
 | `SCAN_TOKEN_REQUIRED` | 400 | Chamou sem escanear |
 | `SCAN_TOKEN_INVALID` | 400 | Token expirado (>30s), já usado ou de outro usuário |
-| `PARTNER_REQUIRED` / `PARTNER_NOT_FOUND` | 400 / 404 | Dupla sem parceiro ou com parceiro inexistente |
-| `PARTNER_INVALID` | 409 | Parceiro é você mesmo ou já está na fila desta quadra |
-| `ALREADY_IN_QUEUE` | 409 | Você já está em um time nesta quadra |
+| `PARTNER_MUST_SCAN` | 400 | Mandou `partner` — o amigo entra escaneando a quadra |
+| `ALREADY_IN_QUEUE` | 409 | Você já está numa vaga desta quadra |
 | `ALREADY_IN_ANOTHER_QUEUE` | 409 | Você já está na fila de outra quadra — a mensagem diz qual |
 | `COURT_UNAVAILABLE` | 409 | Quadra indisponível |
 
 ---
 
-## POST /check-in — liberar o placar e iniciar (Sprint 3)
+## POST /check-in — check-in na quadra (Sprint 3, revisto na Sprint 4)
 
 ```json
-{ "scanToken": "s3Kf9...", "side": "auto" }
+{ "scanToken": "s3Kf9..." }
 ```
 
-É o "Check-in para jogar": quando é a vez do seu time, você escaneia o
-QR (ou encosta no totem) e a partida começa. Num parque público não há
-operador — quem libera o placar é quem vai jogar.
+Quando o grupo é chamado, **basta um** check-in (QR ou totem NFC) para o
+turno começar. Quem é do grupo e chega depois escaneia também: o turno
+não reinicia, só fica registrado que a pessoa está em quadra
+(`players[].checked_in`). A tolerância depois da chamada é
+`court.call_window_seconds` — 2 minutos por padrão, ajustável pelo admin.
 
-`side` é `"auto"` (padrão) para iniciar a partida com o time na vez, ou
-`"open"` para ocupar o lado livre de uma partida em andamento (o
-"Adversário livre" da tela).
-
-**201** devolve o placar (`match_state`):
+**201** devolve o turno (`match_state`):
 
 ```json
 {
   "match_id": "...",
   "court_name": "Quadra 01",
-  "mode": "double",
+  "entry_id": "...",
+  "group_size": 4,
+  "group_label": "4 jogadores",
   "slot_minutes": 40,
   "is_live": true,
   "remaining_seconds": 2398,
-  "side_a": { "entry_id": "...", "role": "challenger", "players": [ ] },
-  "side_b": { "entry_id": "...", "role": "holder", "open": false, "players": [ ] }
+  "players": [
+    { "user_id": "...", "short_name": "Ana S.", "initials": "AS", "role": "owner", "checked_in": true }
+  ]
 }
 ```
 
 | Código | HTTP | Quando |
 |---|---|---|
-| `NOT_YOUR_TURN` | 409 | Outro time está na vez |
-| `COURT_BUSY` | 409 | A partida atual ainda tem slot pela frente |
-| `CALL_EXPIRED` | 410 | Passou dos 5 minutos da chamada |
+| `NOT_YOUR_TURN` | 409 | Outro grupo está na vez |
+| `COURT_BUSY` | 409 | O turno atual ainda tem tempo pela frente |
+| `CALL_EXPIRED` | 410 | Passou a tolerância da chamada |
 | `SCAN_TOKEN_INVALID` | 400 | Token expirado, já usado ou de outro usuário |
 
 ---
 
-## POST / GET /match — resultado da partida (Sprint 3)
+## POST / GET /match — devolver a quadra (Sprint 3, revisto na Sprint 4)
 
 ```json
-{ "matchId": "...", "winner": "a" }
+{ "matchId": "..." }
 ```
 
-Quem ganha fica: o lado vencedor segue em quadra como mandante e o
-próximo da fila entra como desafiante. Qualquer jogador dos dois lados
-reporta. Se ninguém reportar até o slot acabar, a partida encerra **sem
-vencedor** e a quadra fica sem mandante.
+Qualquer pessoa do grupo em quadra encerra o turno antes do fim
+(`end_reason = finished_by_group`) e o próximo da fila é chamado. Não há
+vencedor nem "quem ganha fica": cada vaga vale um turno fixo de
+`slot_minutes`, para um grupo de qualquer tamanho. Se ninguém encerrar,
+o turno acaba sozinho no fim do slot.
 
-`GET /match?matchId=<uuid>` devolve o placar (útil após reconexão).
+`GET /match?matchId=<uuid>` devolve o turno (útil após reconexão).
 
 ---
 
@@ -183,10 +185,13 @@ vencedor** e a quadra fica sem mandante.
 { "entryId": "9f1c...", "reason": "mudou de ideia" }
 ```
 
-**200** `{ "entry_id": "9f1c...", "status": "cancelled", "left_at": "..." }`
+**200** `{ "entry_id": "9f1c...", "status": "waiting", "left_at": "...", "remaining_members": 3 }`
 
-Qualquer integrante do time pode sair — a saída desfaz o time inteiro.
-Confirme com o usuário antes de chamar (critério de aceite da US-03).
+Sai **quem chamou**, não o grupo inteiro. A vaga continua com quem
+ficou — saindo o dono, o membro mais antigo herda — e só some quando
+sai o último (`status` vira `cancelled`, ou `done` se o turno estava
+rolando, e a vez passa na hora). Confirme com o usuário antes de chamar
+(critério de aceite da US-03).
 
 ---
 
@@ -377,9 +382,9 @@ const { data } = await supabase.rpc("nearby_courts", {
 const { data } = await supabase.rpc("leave_queue", { p_entry_id: entryId });
 ```
 
-`join_queue` também é RPC (`p_scan_token`, `p_mode`, `p_partner`), mas o
-`scanToken` só existe depois de `scan-court` — a Edge Function continua
-sendo o caminho natural para entrar na fila.
+`join_queue` também é RPC (`p_scan_token`), mas o `scanToken` só existe
+depois de `scan-court` — a Edge Function continua sendo o caminho
+natural para abrir uma vaga.
 
 ### RPCs da Sprint 2
 
@@ -434,9 +439,6 @@ await supabase.rpc("court_screen", { p_court_id: courtId });
 // O cartão "você está na fila" e a contagem da chamada
 await supabase.rpc("my_queue_state");
 
-// Escolher parceiro, com disponibilidade
-await supabase.rpc("search_partners", { p_query: "@bru" });
-
 // Perfil: raquete e tom do avatar
 await supabase.rpc("update_my_profile", {
   p_full_name: "Rafael Moura",
@@ -457,14 +459,52 @@ await supabase.from("racket_palette").select("*").order("sort_order");
 | `court.surface_label` | "Saibro" / "Rápida" / "Grama" |
 | `court.checkin_methods` | `["qr"]` ou `["qr","nfc"]` — quais abas mostrar |
 | `status_text` | "Em jogo" / "Livre" |
-| `players_line` | "D. Matsuo / M. Costa × T. Lima / J. Prado" |
+| `players_line` | "Diego M. · Mara C. · Téo L." — o grupo em quadra |
 | `match.remaining_seconds` | Cronômetro do slot |
 | `queue[].stack` | Raquetes à frente (máx. 5) para desenhar a pilha |
 | `queue[].stack_more` | Quantas sobraram atrás da pilha |
-| `queue[].is_mine` | Destaca a linha do próprio time |
+| `queue[].is_mine` | Destaca a linha do próprio grupo |
+| `queue[].group_label` | "Solo" / "Dupla" / "5 jogadores" |
+| `my_group` | Só para quem é do grupo: `pin`, `is_owner`, `players`, `pending_requests` |
+| `my_request` | O pedido que eu fiz para entrar num grupo desta quadra |
 | `court_accepting` | A quadra aceita entradas |
 | `can_join` | **Eu** posso entrar (não estou em outra fila) |
 | `my_state` | `free` / `queued` / `playing`, com onde |
+
+### RPCs da Sprint 4 — grupos
+
+Toda entrada num grupo exige um scan novo da quadra do grupo (o mesmo
+`scanToken` de `scan-court`): é a prova de que a pessoa está lá.
+
+```ts
+// Pedir para entrar no grupo de alguém (o dono recebe push e vê na tela)
+await supabase.rpc("request_join", { p_scan_token: token, p_entry_id: entryId });
+
+// Já está em outra fila? Volta NQ014 com "saia da sua fila atual (…)".
+// O app pergunta; confirmado, repete com p_leave_current — sai e pede
+// na mesma transação, e o scan (que não foi gasto) ainda vale.
+await supabase.rpc("request_join", { p_scan_token: token, p_entry_id: entryId, p_leave_current: true });
+
+// O dono aceita ou recusa
+await supabase.rpc("decide_join_request", { p_request_id: id, p_approve: true });
+
+// Quem pediu desiste
+await supabase.rpc("cancel_join_request", { p_request_id: id });
+
+// Entrar direto com o PIN do grupo (aceita p_leave_current também)
+const { data } = await supabase.rpc("join_with_pin", { p_scan_token: token, p_pin: "4821" });
+// PIN errado NÃO é erro — a tentativa precisa ficar gravada:
+// { joined: false, code: "PIN_INVALID", message, attempts_left }
+// O scan é gasto, e 5 erros em 15 minutos travam com NQ028.
+```
+
+O PIN tem 4 dígitos, é único entre as vagas ativas da quadra e é
+próprio de cada vaga — o PIN de semana passada não serve hoje. Fica numa
+tabela sem acesso direto do cliente; só sai em `court_screen.my_group` e
+`my_queue_state.group`, para quem é do grupo.
+
+Pedido pendente expira em 10 minutos, quando o grupo sai da fila ou
+quando a pessoa entra em outra vaga.
 
 ### Tempo real (US-03)
 
@@ -483,6 +523,20 @@ const channel = supabase
     table: "courts",
     filter: `id=eq.${courtId}`,
   }, (payload) => setCourt(payload.new))
+  // Sprint 4: alguém entrou ou saiu de um grupo, e pedidos de entrada.
+  // O RLS de queue_join_requests só entrega ao grupo e a quem pediu.
+  .on("postgres_changes", {
+    event: "*",
+    schema: "public",
+    table: "queue_entry_members",
+    filter: `court_id=eq.${courtId}`,
+  }, () => refetchQueue())
+  .on("postgres_changes", {
+    event: "*",
+    schema: "public",
+    table: "queue_join_requests",
+    filter: `court_id=eq.${courtId}`,
+  }, () => refetchQueue())
   .subscribe();
 ```
 
@@ -502,9 +556,9 @@ tabela acima.
 | `NQ002` | Scan token inválido, expirado ou já usado |
 | `NQ003` | Quadra indisponível |
 | `NQ004` | Jogador já está na fila desta quadra |
-| `NQ005` | Parceiro não encontrado |
-| `NQ006` | Parceiro inválido |
-| `NQ007` | Time não encontrado |
+| `NQ005` | Parceiro não encontrado (legado: parceiro pelo @) |
+| `NQ006` | Parceiro inválido (legado: parceiro pelo @) |
+| `NQ007` | Grupo não encontrado |
 | `NQ008` | Sem permissão |
 | `NQ009` | Transição de estado inválida |
 | `NQ010` | Avaliar quadra onde ainda não jogou |
@@ -512,9 +566,12 @@ tabela acima.
 | `NQ012` | Cota de fotos pendentes atingida |
 | `NQ013` | Foto não encontrada |
 | `NQ014` | Já está na fila de outra quadra |
-| `NQ015` | Não é a vez deste time |
-| `NQ016` | Janela de check-in expirada |
+| `NQ015` | Não é a vez deste grupo |
+| `NQ016` | Tolerância do check-in expirada |
 | `NQ017` | Quadra ocupada |
 | `NQ018` | Partida não encontrada |
 | `NQ019` | Cor fora da paleta |
 | `NQ020` | Parque não encontrado |
+| `NQ027` | Pedido de entrada não está mais pendente |
+| `NQ028` | Muitas tentativas de PIN (5 em 15 min) |
+| `NQ029` | Parceiro pelo @ — ele entra escaneando a quadra |

@@ -1,48 +1,63 @@
-import { useEffect, useState } from "react";
-import { Arrow, Check, Close, Lock, Search, Warn } from "../components/icons";
-import { joinQueue, searchPartners } from "../lib/api";
+import { useEffect, useRef, useState } from "react";
+import { Arrow, Check, Close, Lock, Players, ScanFrame, Warn } from "../components/icons";
+import { useTicker } from "../hooks/useLiveCourt";
+import { joinQueue, joinWithPin, requestJoin } from "../lib/api";
 import { SURFACE_COLOR, eta, mmss, surfaceTextColor } from "../lib/format";
-import type { CourtScreen, PartnerCandidate, QueueMode, ScanResult } from "../lib/types";
+import type { CourtScreen, Player, ScanResult } from "../lib/types";
+
+export type JoinOutcome = "opened" | "requested" | "joined";
+
+/** Um grupo da quadra em que dá para entrar: o que está em quadra e os da fila. */
+interface Joinable {
+  entryId: string;
+  where: string;
+  label: string;
+  size: string;
+  owner: string;
+}
 
 /**
- * A folha "entrar na fila" do protótipo: check-in já confirmado,
- * escolha da modalidade, busca do parceiro e a posição prevista.
+ * A folha que abre depois de escanear a quadra. Três caminhos:
  *
- * A ordem importa: o token do scan vale 30 segundos, mas o relógio só
- * aperta no envio — por isso a escolha vem depois da leitura, e o
- * join sai de uma vez quando o jogador confirma.
+ *   - abrir uma vaga — sozinho; os amigos entram nela depois;
+ *   - pedir para entrar no grupo de alguém — o dono aceita;
+ *   - entrar com o PIN do grupo — sem esperar ninguém.
+ *
+ * O scan vale 30 segundos e é de uso único. Por isso o relógio aparece
+ * aqui, e um PIN errado (que gasta o scan) pede uma leitura nova.
  */
 export function JoinSheet({
   court,
   scan,
   method,
   onClose,
-  onJoined,
+  onRescan,
+  onDone,
 }: {
   court: CourtScreen;
   scan: ScanResult;
   method: "qr" | "nfc";
   onClose: () => void;
-  onJoined: () => Promise<void> | void;
+  onRescan: () => void;
+  onDone: (outcome: JoinOutcome) => Promise<void> | void;
 }) {
-  const [mode, setMode] = useState<QueueMode>("double");
-  const [query, setQuery] = useState("");
-  const [partner, setPartner] = useState<PartnerCandidate | null>(null);
-  const [candidates, setCandidates] = useState<PartnerCandidate[]>([]);
+  const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [spent, setSpent] = useState(false);
+  const [switchTo, setSwitchTo] = useState<Joinable | null>(null);
+  const sheet = useRef<HTMLDivElement>(null);
 
+  // O erro aparece no topo da folha; quem errou o PIN está lá embaixo.
   useEffect(() => {
-    if (mode !== "double") return;
-    const id = setTimeout(() => {
-      void searchPartners(query).then(setCandidates).catch(() => setCandidates([]));
-    }, 250);
-    return () => clearTimeout(id);
-  }, [mode, query]);
+    if (error) sheet.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [error]);
 
-  const blocked = !court.can_join;
-  const needPartner = mode === "double" && !partner;
-  const cannotConfirm = blocked || needPartner || busy;
+  useTicker(!spent);
+
+  const secondsLeft = Math.max(0, Math.floor((new Date(scan.expiresAt).getTime() - Date.now()) / 1000));
+  const expired = spent || secondsLeft === 0;
+  const free = court.my_state.state === "free";
 
   const board = SURFACE_COLOR[court.court.surface] ?? "var(--green)";
   const boardText = surfaceTextColor(court.court.surface);
@@ -50,22 +65,80 @@ export function JoinSheet({
     ? Math.max(0, Math.floor((Date.now() - new Date(court.match.started_at).getTime()) / 1000))
     : 0;
 
-  async function confirm() {
-    if (cannotConfirm) return;
+  const groups: Joinable[] = [
+    ...(court.match?.is_live
+      ? [{
+        entryId: court.match.entry_id,
+        where: "Em quadra",
+        label: teamLabel(court.match.players),
+        size: court.match.group_label,
+        owner: ownerName(court.match.players),
+      }]
+      : []),
+    ...court.queue
+      .filter((item) => !item.is_mine)
+      .map((item) => ({
+        entryId: item.entry_id,
+        where: `${item.position_label} da fila`,
+        label: item.team_label ?? "Grupo",
+        size: item.group_label,
+        owner: ownerName(item.players),
+      })),
+  ];
+
+  async function run(action: () => Promise<void>, group?: Joinable) {
+    if (busy || expired) return;
     setBusy(true);
     setError(null);
     try {
-      await joinQueue({
-        scanToken: scan.scanToken,
-        mode,
-        partner: mode === "double" ? partner?.handle ?? null : null,
-      });
-      if (navigator.vibrate) navigator.vibrate([18, 40, 24]);
-      await onJoined();
+      await action();
     } catch (cause) {
-      setError((cause as Error).message);
+      const failure = cause as { code?: string; message?: string };
+      // Está em outra fila: o aviso pergunta se quer sair dela. A
+      // chamada que falhou não gastou o scan, então dá para repetir.
+      if (group && (failure.code === "NQ014" || failure.code === "ALREADY_IN_ANOTHER_QUEUE")) {
+        setSwitchTo(group);
+      } else {
+        if (failure.code === "NQ002" || failure.code === "SCAN_TOKEN_INVALID") setSpent(true);
+        setError(failure.message ?? "Não foi possível concluir.");
+      }
+    } finally {
       setBusy(false);
     }
+  }
+
+  function openSpot() {
+    void run(async () => {
+      await joinQueue(scan.scanToken);
+      if (navigator.vibrate) navigator.vibrate([18, 40, 24]);
+      await onDone("opened");
+    });
+  }
+
+  function ask(group: Joinable, leaveCurrent = false) {
+    void run(async () => {
+      await requestJoin(scan.scanToken, group.entryId, leaveCurrent);
+      await onDone("requested");
+    }, group);
+  }
+
+  function enterWithPin(leaveCurrent = false) {
+    const group: Joinable = { entryId: "", where: "", label: "", size: "", owner: "" };
+    void run(async () => {
+      const result = await joinWithPin(scan.scanToken, pin, leaveCurrent);
+      if (!result.joined) {
+        // PIN errado gasta o scan: tentar de novo exige estar na quadra.
+        setSpent(true);
+        setError(
+          result.attempts_left > 0
+            ? `${result.message} Restam ${result.attempts_left} tentativa(s).`
+            : "PIN incorreto. As tentativas acabaram por agora — peça para entrar no grupo.",
+        );
+        return;
+      }
+      if (navigator.vibrate) navigator.vibrate([18, 40, 24]);
+      await onDone("joined");
+    }, group);
   }
 
   return (
@@ -91,6 +164,7 @@ export function JoinSheet({
       }}
     >
       <div
+        ref={sheet}
         className="sheet scroll"
         onClick={(event) => event.stopPropagation()}
         style={{
@@ -121,18 +195,7 @@ export function JoinSheet({
             className="press"
             onClick={onClose}
             aria-label="Fechar"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-              width: 44,
-              height: 44,
-              background: "transparent",
-              color: "var(--ink)",
-              border: "1.5px solid rgba(10,14,11,.3)",
-              borderRadius: 10,
-            }}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 44, height: 44, background: "transparent", color: "var(--ink)", border: "1.5px solid rgba(10,14,11,.3)", borderRadius: 10 }}
           >
             <Close size={20} />
           </button>
@@ -140,88 +203,23 @@ export function JoinSheet({
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: board, color: boardText }}>
           <span className="bb" style={{ fontSize: 26, lineHeight: 1 }}>{mmss(elapsed)}</span>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{court.status_text} · {court.queue_text}</span>
-        </div>
-
-        {blocked && (
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--rust)", borderRadius: 10, fontSize: 13, lineHeight: 1.4 }}>
-            <span style={{ color: "var(--rust)", flexShrink: 0, display: "flex" }}><Warn size={20} /></span>
-            <span>
-              <strong>{court.my_state.where ?? "Você não pode entrar nesta fila agora."}</strong>{" "}
-              {court.my_state.state !== "free" ? "Uma fila por vez — saia da atual para entrar aqui." : ""}
-            </span>
-          </div>
-        )}
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>Modalidade</span>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-            <ModeCard
-              label="Simples"
-              big="1x1"
-              selected={mode === "single"}
-              onClick={() => { setMode("single"); setPartner(null); }}
-            />
-            <ModeCard
-              label="Duplas"
-              big="2x2"
-              selected={mode === "double"}
-              onClick={() => setMode("double")}
-            />
-          </div>
-        </div>
-
-        {mode === "double" && (
-          <div className="fade" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <label htmlFor="partner-q" style={{ fontSize: 13, fontWeight: 700 }}>Parceiro de jogo</label>
-            <div style={{ position: "relative" }}>
-              <span style={{ position: "absolute", left: 14, top: 15, color: "var(--green)", display: "flex" }}>
-                <Search size={18} />
-              </span>
-              <input
-                id="partner-q"
-                type="search"
-                placeholder="Buscar por nome ou @usuário"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                style={{ width: "100%", height: 48, padding: "0 14px 0 42px", background: "var(--chalk)", border: "1.5px solid rgba(47,70,41,.35)", borderRadius: 8, fontSize: 15, color: "var(--ink)" }}
-              />
-            </div>
-
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", background: "rgba(47,70,41,.08)", borderRadius: 8, fontSize: 12, lineHeight: 1.4 }}>
-              <span style={{ flexShrink: 0, marginTop: 1, display: "flex" }}><Lock size={16} /></span>
-              <span>
-                <strong>Regra anti-fura-fila:</strong> parceiros que já estão em jogo ou em outra
-                fila não podem ser adicionados.
-              </span>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {candidates.map((candidate) => (
-                <PartnerRow
-                  key={candidate.user_id}
-                  candidate={candidate}
-                  selected={partner?.user_id === candidate.user_id}
-                  onPick={() =>
-                    setPartner(partner?.user_id === candidate.user_id ? null : candidate)}
-                />
-              ))}
-              {candidates.length === 0 && (
-                <span style={{ padding: 12, fontSize: 13, color: "var(--green)" }}>
-                  Nenhum jogador encontrado.
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0 0", borderTop: "1px dashed rgba(47,70,41,.35)" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--green)" }}>Sua posição prevista</span>
-          <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>{court.next_position_label}</span>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>em {eta(court.total_wait_seconds)}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, flexGrow: 1 }}>{court.status_text} · {court.queue_text}</span>
+          <span style={{ fontSize: 11, fontWeight: 700 }} aria-live="polite">
+            {expired ? "Leitura vencida" : `Leitura vale ${mmss(secondsLeft)}`}
           </span>
         </div>
+
+        {expired && (
+          <button
+            type="button"
+            className="press"
+            onClick={onRescan}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 52, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 15, fontWeight: 800 }}
+          >
+            <ScanFrame size={20} />
+            Escanear a quadra de novo
+          </button>
+        )}
 
         {error && (
           <p role="alert" style={{ margin: 0, padding: "10px 12px", borderRadius: 8, fontSize: 13, lineHeight: 1.4, background: "rgba(177,63,22,.1)", color: "var(--rust)" }}>
@@ -229,135 +227,204 @@ export function JoinSheet({
           </p>
         )}
 
+        {/* --------------------------- abrir vaga --------------------------- */}
+        <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>Guardar lugar na fila</span>
+
+          {!free && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--rust)", borderRadius: 10, fontSize: 13, lineHeight: 1.4 }}>
+              <span style={{ color: "var(--rust)", flexShrink: 0, display: "flex" }}><Warn size={20} /></span>
+              <span>
+                <strong>{court.my_state.where ?? "Você já está em uma fila."}</strong>{" "}
+                Uma vaga por pessoa — saia da atual para abrir outra.
+              </span>
+            </div>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "var(--green)", fontWeight: 600 }}>Sua posição prevista</span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>{court.next_position_label}</span>
+              <span style={{ fontWeight: 600 }}>em {eta(court.total_wait_seconds)}</span>
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className="press"
+            onClick={openSpot}
+            disabled={!court.can_join || busy || expired}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+              width: "100%",
+              minHeight: 56,
+              borderRadius: 10,
+              fontSize: 16,
+              fontWeight: 800,
+              ...(!court.can_join || busy || expired
+                ? { background: "var(--mauve)", color: "var(--muted)", border: "2px solid transparent" }
+                : { background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)" }),
+            }}
+          >
+            {busy ? "Um instante…" : "Abrir vaga e entrar na fila"}
+            {!busy && <Arrow size={20} />}
+          </button>
+          <span style={{ fontSize: 12, lineHeight: 1.4, color: "var(--green)" }}>
+            Pode entrar sozinho. Seus amigos entram na mesma vaga escaneando a quadra — você
+            aceita o pedido ou passa o PIN do grupo.
+          </span>
+        </section>
+
+        {/* ------------------------ grupo de um amigo ------------------------ */}
+        <section style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 14, borderTop: "1px dashed rgba(47,70,41,.35)" }}>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>Entrar no grupo de um amigo</span>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              aria-label="PIN do grupo"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={4}
+              placeholder="PIN"
+              value={pin}
+              onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+              style={{ width: 0, flexGrow: 1, height: 52, padding: "0 14px", background: "var(--chalk)", border: "1.5px solid rgba(47,70,41,.35)", borderRadius: 8, fontSize: 24, letterSpacing: ".3em", fontWeight: 700, color: "var(--ink)" }}
+            />
+            <button
+              type="button"
+              className="press"
+              onClick={() => enterWithPin()}
+              disabled={pin.length !== 4 || busy || expired}
+              style={{ minHeight: 52, padding: "0 16px", borderRadius: 8, fontSize: 14, fontWeight: 800, background: "var(--green)", color: "var(--chalk)", border: 0, opacity: pin.length !== 4 || busy || expired ? 0.5 : 1 }}
+            >
+              Entrar com PIN
+            </button>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", background: "rgba(47,70,41,.08)", borderRadius: 8, fontSize: 12, lineHeight: 1.4 }}>
+            <span style={{ flexShrink: 0, marginTop: 1, display: "flex" }}><Lock size={16} /></span>
+            <span>
+              <strong>Regra anti-fura-fila:</strong> cada pessoa escaneia a quadra para entrar no
+              grupo. Sem o PIN, quem abriu a vaga precisa aceitar o seu pedido.
+            </span>
+          </div>
+
+          {groups.length === 0 && (
+            <span style={{ padding: 12, fontSize: 13, color: "var(--green)" }}>
+              Nenhum grupo nesta quadra ainda.
+            </span>
+          )}
+
+          {groups.map((group) => (
+            <div
+              key={group.entryId}
+              style={{ display: "flex", alignItems: "center", gap: 12, minHeight: 60, padding: "8px 10px 8px 12px", borderRadius: 10, background: "var(--chalk)", border: "1.5px solid rgba(47,70,41,.2)" }}
+            >
+              <span style={{ display: "flex", color: "var(--green)" }}><Players size={20} /></span>
+              <span style={{ display: "flex", flexDirection: "column", gap: 2, flexGrow: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{group.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--green)" }}>{group.where} · {group.size}</span>
+              </span>
+              <button
+                type="button"
+                className="press"
+                onClick={() => ask(group)}
+                disabled={busy || expired}
+                style={{ flexShrink: 0, minHeight: 44, padding: "0 12px", borderRadius: 8, fontSize: 13, fontWeight: 800, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", opacity: busy || expired ? 0.5 : 1 }}
+              >
+                Pedir para entrar
+              </button>
+            </div>
+          ))}
+        </section>
+      </div>
+
+      {switchTo && (
+        <SwitchQueuePrompt
+          courtName={court.my_state.court_name ?? null}
+          owner={switchTo.owner}
+          busy={busy}
+          onCancel={() => setSwitchTo(null)}
+          onConfirm={() => {
+            const target = switchTo;
+            setSwitchTo(null);
+            if (target.entryId) ask(target, true);
+            else enterWithPin(true);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** O aviso de uma vaga por pessoa, com a saída na mesma tela. */
+function SwitchQueuePrompt({
+  courtName,
+  owner,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  courtName: string | null;
+  owner: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-label="Sair da fila atual"
+      onClick={(event) => { event.stopPropagation(); onCancel(); }}
+      style={{ position: "absolute", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, background: "rgba(10,14,11,.55)" }}
+    >
+      <div
+        className="fade"
+        onClick={(event) => event.stopPropagation()}
+        style={{ display: "flex", flexDirection: "column", gap: 14, width: "100%", padding: 18, background: "var(--bg)", border: "2px solid var(--rust)", borderRadius: 14 }}
+      >
+        <span style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--rust)", fontSize: 12, fontWeight: 800, letterSpacing: ".08em" }}>
+          <Warn size={18} />
+          UMA VAGA POR PESSOA
+        </span>
+        <span className="bb" style={{ fontSize: 28, lineHeight: 1 }}>Você já está numa fila</span>
+        <span style={{ fontSize: 14, lineHeight: 1.45 }}>
+          Você está <strong>{courtName ? `na fila da ${courtName}` : "em outra fila"}</strong>. Para entrar na fila
+          {owner ? ` de ${owner}` : " deste grupo"}, você precisa sair da sua fila atual — e perde o
+          lugar que tinha lá.
+        </span>
         <button
           type="button"
           className="press"
-          onClick={() => void confirm()}
-          disabled={cannotConfirm}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10,
-            width: "100%",
-            minHeight: 58,
-            borderRadius: 10,
-            fontSize: 16,
-            fontWeight: 800,
-            ...(cannotConfirm
-              ? { background: "var(--mauve)", color: "var(--muted)", border: "2px solid transparent" }
-              : { background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)" }),
-          }}
+          disabled={busy}
+          onClick={onConfirm}
+          style={{ minHeight: 52, borderRadius: 10, fontSize: 15, fontWeight: 800, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)" }}
         >
-          {busy ? "Entrando na fila…" : "Confirmar e Entrar na Fila"}
-          {!busy && <Arrow size={20} />}
+          Sair da minha fila e entrar
         </button>
-
-        {needPartner && !blocked && (
-          <span style={{ marginTop: -8, textAlign: "center", fontSize: 12, fontWeight: 600, color: "var(--green)" }}>
-            Escolha um parceiro disponível para continuar.
-          </span>
-        )}
+        <button
+          type="button"
+          className="press"
+          onClick={onCancel}
+          style={{ minHeight: 48, borderRadius: 10, fontSize: 14, fontWeight: 700, background: "transparent", color: "var(--ink)", border: "1.5px solid rgba(10,14,11,.3)" }}
+        >
+          Continuar na minha fila
+        </button>
       </div>
     </div>
   );
 }
 
-function ModeCard({
-  label,
-  big,
-  selected,
-  onClick,
-}: {
-  label: string;
-  big: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="press"
-      onClick={onClick}
-      aria-pressed={selected}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-start",
-        gap: 2,
-        minHeight: 76,
-        padding: "10px 12px",
-        borderRadius: 10,
-        textAlign: "left",
-        ...(selected
-          ? { background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--green)" }
-          : { background: "var(--chalk)", color: "var(--ink)", border: "1.5px solid rgba(47,70,41,.35)" }),
-      }}
-    >
-      <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", fontSize: 14, fontWeight: 700 }}>
-        {label}
-        {selected && <span style={{ color: "var(--ocre)", display: "flex" }}><Check size={18} /></span>}
-      </span>
-      <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>{big}</span>
-    </button>
-  );
+function ownerName(players: Player[]): string {
+  const owner = players.find((player) => player.role === "owner") ?? players[0];
+  return owner?.short_name ?? "seu amigo";
 }
 
-function PartnerRow({
-  candidate,
-  selected,
-  onPick,
-}: {
-  candidate: PartnerCandidate;
-  selected: boolean;
-  onPick: () => void;
-}) {
-  const blocked = !candidate.available;
-
-  const row = selected
-    ? { background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--green)" }
-    : blocked
-      ? { background: "transparent", color: "var(--muted)", border: "1.5px dashed rgba(10,14,11,.35)" }
-      : { background: "var(--chalk)", color: "var(--ink)", border: "1.5px solid rgba(47,70,41,.2)" };
-
-  const avatar = blocked
-    ? { background: "rgba(10,14,11,.1)", color: "var(--muted)" }
-    : selected
-      ? { background: "var(--ocre)", color: "var(--ink)" }
-      : { background: "var(--green)", color: "var(--chalk)" };
-
-  return (
-    <button
-      type="button"
-      className="press"
-      onClick={onPick}
-      disabled={blocked}
-      aria-pressed={selected}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        width: "100%",
-        minHeight: 56,
-        padding: "8px 12px",
-        borderRadius: 10,
-        textAlign: "left",
-        ...row,
-      }}
-    >
-      <span className="bb" style={{ display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 36, height: 36, borderRadius: 8, fontSize: 18, ...avatar }}>
-        {candidate.initials}
-      </span>
-      <span style={{ display: "flex", flexDirection: "column", gap: 2, flexGrow: 1, minWidth: 0 }}>
-        <span style={{ fontSize: 14, fontWeight: 700 }}>{candidate.full_name ?? candidate.handle}</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600 }}>
-          {blocked
-            ? <Lock size={12} strokeWidth="2.4" />
-            : <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--sage)", border: "1.5px solid currentColor" }} />}
-          {blocked ? `${candidate.where} — indisponível` : `Disponível · ${candidate.handle}`}
-        </span>
-      </span>
-      {selected && <span style={{ color: "var(--sage)", display: "flex" }}><Check size={20} /></span>}
-    </button>
-  );
+function teamLabel(players: Player[]): string {
+  const names = players.slice(0, 2).map((player) => player.short_name).join(" + ");
+  return players.length > 2 ? `${names} + ${players.length - 2}` : names || "Grupo";
 }

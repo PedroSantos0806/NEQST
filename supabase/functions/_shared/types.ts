@@ -17,13 +17,15 @@ export type QueueMemberRole = "owner" | "partner";
 export type CourtSurface = "clay" | "hard" | "grass";
 export type ScanMethod = "qr" | "nfc";
 export type ScanPurpose = "join" | "start";
-export type MatchSide = "a" | "b";
 export type PlayerState = "free" | "queued" | "playing";
 export type NotificationType =
   | "queue_almost_ready"
   | "queue_turn"
   | "queue_cancelled"
-  | "queue_partner_added";
+  | "queue_partner_added"
+  | "group_join_request"
+  | "group_join_approved";
+export type JoinRequestStatus = "pending" | "approved" | "rejected" | "cancelled" | "expired";
 
 export interface CourtRow {
   id: string;
@@ -88,14 +90,13 @@ export interface CourtQueueState {
   teams_waiting: number;
   current_match: {
     entry_id: string;
-    mode: QueueMode;
     started_at: string | null;
     players: QueuePlayer[];
   } | null;
   current_match_remaining_minutes: number | null;
   queue: Array<{
     entry_id: string;
-    mode: QueueMode;
+    group_size: number;
     status: QueueEntryStatus;
     joined_at: string;
     position: number;
