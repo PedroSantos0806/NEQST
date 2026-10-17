@@ -1,15 +1,20 @@
 /**
  * POST /functions/v1/join-queue   (US-03)
  *
- * Body: { scanToken: string, mode?: "single" | "double", partner?: string }
- * 200:  estado do time (posição, times na frente, tempo estimado)
+ * Abre uma vaga na fila. Quem abre pode estar sozinho: os amigos entram
+ * na mesma vaga depois, escaneando a quadra (RPC request_join ou
+ * join_with_pin — ver docs/api.md).
+ *
+ * Body:  { scanToken: string }
+ *   `mode` ainda é aceito e ignorado (app anterior à Sprint 4).
+ *   `partner` é recusado: o parceiro pelo @ não provava presença.
+ * 200:   estado da vaga (posição, grupos na frente, tempo estimado)
  */
 import { ApiError, json, postgrestError, readJson, requireMethod, serve } from "../_shared/http.ts";
 import { requireUser } from "../_shared/supabase.ts";
 
 interface JoinRequest {
   scanToken?: string;
-  mode?: "single" | "double";
   partner?: string | null;
 }
 
@@ -18,7 +23,6 @@ serve(async (req) => {
 
   const { client } = await requireUser(req);
   const body = await readJson<JoinRequest>(req);
-  const mode = body.mode ?? "single";
 
   if (!body.scanToken) {
     throw new ApiError(
@@ -27,16 +31,9 @@ serve(async (req) => {
       400,
     );
   }
-  if (mode !== "single" && mode !== "double") {
-    throw new ApiError("INVALID_MODE", "Modalidade deve ser 'single' ou 'double'.", 400);
-  }
-  if (mode === "double" && !body.partner?.trim()) {
-    throw new ApiError("PARTNER_REQUIRED", "Informe o @username ou e-mail do parceiro.", 400);
-  }
 
   const { data, error } = await client.rpc("join_queue", {
     p_scan_token: body.scanToken,
-    p_mode: mode,
     p_partner: body.partner ?? null,
   });
 

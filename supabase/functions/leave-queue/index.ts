@@ -1,5 +1,10 @@
 /**
- * POST /functions/v1/leave-queue   (US-03)
+ * POST /functions/v1/leave-queue   (US-03, revisto na Sprint 4)
+ *
+ * Sai do grupo quem chamou — não o grupo inteiro. A vaga continua com
+ * quem ficou (saindo o dono, o membro mais antigo herda) e só some
+ * quando sai o último; aí a vez passa para o próximo da fila.
+ *
  * Body: { entryId: string, reason?: string }
  */
 import { ApiError, json, postgrestError, readJson, requireMethod, serve } from "../_shared/http.ts";
@@ -17,7 +22,7 @@ serve(async (req) => {
   const body = await readJson<LeaveRequest>(req);
 
   if (!body.entryId) {
-    throw new ApiError("ENTRY_ID_REQUIRED", "Informe o time que deve sair da fila.", 400);
+    throw new ApiError("ENTRY_ID_REQUIRED", "Informe o grupo de que você quer sair.", 400);
   }
 
   const { data, error } = await client.rpc("leave_queue", {

@@ -122,7 +122,7 @@ export function requireEnv(name: string): string {
 }
 
 /**
- * Traduz o SQLSTATE das RPCs (NQ001..NQ009) para erro de API.
+ * Traduz o SQLSTATE das RPCs (NQ001..NQ029) para erro de API.
  * Ver supabase/migrations/20260923120600_queue_functions.sql.
  */
 const PG_ERROR_MAP: Record<string, { code: string; status: number }> = {
@@ -146,6 +146,9 @@ const PG_ERROR_MAP: Record<string, { code: string; status: number }> = {
   NQ018: { code: "MATCH_NOT_FOUND", status: 404 },
   NQ019: { code: "COLOR_NOT_IN_PALETTE", status: 400 },
   NQ020: { code: "PARK_NOT_FOUND", status: 404 },
+  NQ027: { code: "JOIN_REQUEST_NOT_PENDING", status: 409 },
+  NQ028: { code: "PIN_ATTEMPTS_EXCEEDED", status: 429 },
+  NQ029: { code: "PARTNER_MUST_SCAN", status: 400 },
 };
 
 export function postgrestError(

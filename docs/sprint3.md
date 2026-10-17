@@ -1,5 +1,11 @@
 # Sprint 3 — alinhamento com o protótipo de frontend
 
+> **Revisto na [Sprint 4](sprint4.md).** O "lado A × lado B, quem ganha
+> fica", o "Adversário livre" e o parceiro adicionado pelo @ saíram: a
+> vaga agora é de um grupo que joga entre si, os amigos entram nela
+> escaneando a quadra, e a chamada tem 2 minutos de tolerância. O resto
+> desta página (parques, check-in, slot, NFC, raquetes) continua valendo.
+
 O protótipo de tela mostrou que o produto é diferente do que as Sprints
 1 e 2 presumiram em quatro pontos de modelo. Esta sprint acerta o
 backend com ele. Nada do que existia foi descartado — a fila, o QR com
