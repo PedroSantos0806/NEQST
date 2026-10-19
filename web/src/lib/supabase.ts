@@ -115,6 +115,23 @@ const RPC_MESSAGES: Record<string, string> = {
 
 export function rpcError(error: { code?: string; message?: string } | null): ApiError {
   const code = error?.code ?? "DATABASE_ERROR";
+
+  /*
+   * PGRST202 é o PostgREST dizendo que não achou a função com aqueles
+   * parâmetros. Na prática significa quase sempre a mesma coisa: o app
+   * foi publicado com uma versão nova e o banco ficou na antiga.
+   * Publicar na Vercel não roda SQL nenhum — e a mensagem crua do
+   * PostgREST (em inglês, com a assinatura inteira) não diz isso a
+   * ninguém.
+   */
+  if (code === "PGRST202") {
+    return new ApiError(
+      code,
+      "O banco ainda está na versão anterior desta função. Cole o db/full_setup.sql "
+      + "no SQL Editor do Supabase e tente de novo — publicar o app não mexe no banco.",
+    );
+  }
+
   // A mensagem do banco já vem em português e costuma ser mais específica.
   return new ApiError(code, error?.message || RPC_MESSAGES[code] || "Não foi possível concluir.");
 }

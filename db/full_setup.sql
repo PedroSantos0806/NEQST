@@ -7818,6 +7818,31 @@ $$;
 
 -- ---------------------------------------------------------------------
 -- Administração: a tolerância do check-in no formulário da quadra
+-- Origem: supabase/migrations/20261011140000_address_and_pin.sql
+-- ####################################################################
+
+-- =====================================================================
+-- Endereço escrito + alfinete no mapa
+--
+-- O cadastro pedia latitude e longitude cruas, e quem cadastra não tem
+-- isso na mão. Pior: a quadra herdava calada a posição do parque, e em
+-- parque grande — quadra no meio, longe da rua — isso é a diferença
+-- entre o check-in funcionar e não funcionar, porque é a posição da
+-- QUADRA que o scan-court compara com a do jogador.
+--
+-- Então o formulário passa a ter duas coisas separadas:
+--   . o endereço, que é referência de quem vai chegar de carro;
+--   . a posição, marcada no mapa, que é o que vale no check-in.
+--
+-- Aqui embaixo isso significa: `p_address` nos dois upserts (a coluna
+-- `address` já existia nas duas tabelas, só não havia como preenchê-la
+-- pelo app), o endereço do parque herdado pela quadra nova, e o
+-- `admin_overview` devolvendo `address` para o formulário reabrir
+-- preenchido.
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- O overview devolve o endereço de parques e quadras
 -- ---------------------------------------------------------------------
 create or replace function public.admin_overview()
 returns jsonb
@@ -7839,6 +7864,7 @@ begin
           'name',      pk.name,
           'district',  pk.district,
           'city',      pk.city,
+          'address',   pk.address,
           'latitude',  pk.latitude,
           'longitude', pk.longitude,
           'tone_color', pk.tone_color,
@@ -7861,6 +7887,10 @@ begin
                 'longitude',     c.longitude,
                 'slot_minutes',  c.slot_minutes,
                 'call_window_seconds', c.call_window_seconds,
+                'address',       c.address,
+                'latitude',      c.latitude,
+                'longitude',     c.longitude,
+                'slot_minutes',  c.slot_minutes,
                 'is_active',     c.is_active,
                 'status',        c.status,
                 'has_qr_code',   c.has_qr_code,
@@ -7892,6 +7922,86 @@ begin
 end;
 $$;
 
+-- ---------------------------------------------------------------------
+-- Parque: endereço junto do resto
+--
+-- A assinatura antiga sai de cena: com todos os parâmetros opcionais,
+-- duas versões conviventes deixariam a chamada por nome ambígua.
+-- ---------------------------------------------------------------------
+drop function if exists public.admin_upsert_park(
+  uuid, text, text, text, double precision, double precision, text, text, boolean
+);
+
+create or replace function public.admin_upsert_park(
+  p_id        uuid    default null,
+  p_name      text    default null,
+  p_district  text    default null,
+  p_city      text    default null,
+  p_address   text    default null,
+  p_latitude  double precision default null,
+  p_longitude double precision default null,
+  p_tone_color text   default null,
+  p_photo_alt text    default null,
+  p_is_active boolean default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_row public.parks;
+begin
+  perform public.require_admin();
+
+  if p_id is null then
+    if coalesce(trim(p_name), '') = '' then
+      raise exception 'Informe o nome do parque.' using errcode = 'NQ024';
+    end if;
+    if p_latitude is null or p_longitude is null then
+      raise exception 'Marque no mapa onde fica o parque.' using errcode = 'NQ024';
+    end if;
+
+    insert into public.parks (
+      slug, name, district, city, address, latitude, longitude, tone_color, photo_alt
+    )
+    values (
+      public.unique_slug('parks', p_name),
+      trim(p_name), nullif(trim(p_district), ''), nullif(trim(p_city), ''),
+      nullif(trim(p_address), ''),
+      p_latitude, p_longitude, nullif(trim(p_tone_color), ''), nullif(trim(p_photo_alt), '')
+    )
+    returning * into v_row;
+  else
+    update public.parks set
+      name       = coalesce(nullif(trim(p_name), ''), name),
+      district   = coalesce(nullif(trim(p_district), ''), district),
+      city       = coalesce(nullif(trim(p_city), ''), city),
+      address    = coalesce(nullif(trim(p_address), ''), address),
+      latitude   = coalesce(p_latitude, latitude),
+      longitude  = coalesce(p_longitude, longitude),
+      tone_color = coalesce(nullif(trim(p_tone_color), ''), tone_color),
+      photo_alt  = coalesce(nullif(trim(p_photo_alt), ''), photo_alt),
+      is_active  = coalesce(p_is_active, is_active)
+    where id = p_id
+    returning * into v_row;
+
+    if v_row.id is null then
+      raise exception 'Parque não encontrado.' using errcode = 'NQ025';
+    end if;
+  end if;
+
+  return to_jsonb(v_row);
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Quadra: endereço de referência e posição própria
+--
+-- A posição continua caindo para a do parque quando não vem nada — é o
+-- que mantém o cadastro antigo válido. A diferença é que agora o
+-- formulário sempre manda a posição marcada no mapa, então a quadra do
+-- meio do parque deixa de ficar com a coordenada do portão.
+-- ---------------------------------------------------------------------
 drop function if exists public.admin_upsert_court(
   uuid, uuid, smallint, text, text, double precision, double precision,
   smallint, boolean, boolean, boolean, integer, integer, boolean
@@ -7903,6 +8013,7 @@ create or replace function public.admin_upsert_court(
   p_court_number smallint default null,
   p_surface      text    default null,
   p_name         text    default null,
+  p_address      text    default null,
   p_latitude     double precision default null,
   p_longitude    double precision default null,
   p_slot_minutes smallint default null,
@@ -7913,6 +8024,7 @@ create or replace function public.admin_upsert_court(
   p_gps_tolerance_meters integer default null,
   p_enforce_proximity    boolean default null,
   p_call_window_seconds  integer default null
+  p_enforce_proximity    boolean default null
 )
 returns jsonb
 language plpgsql
@@ -7943,12 +8055,15 @@ begin
       park_id, court_number, surface, slug, name,
       latitude, longitude, city, slot_minutes, has_qr_code, has_nfc_tag,
       max_distance_meters, gps_tolerance_meters, enforce_proximity, call_window_seconds
+      address, latitude, longitude, city, slot_minutes, has_qr_code, has_nfc_tag,
+      max_distance_meters, gps_tolerance_meters, enforce_proximity
     )
     values (
       v_park.id, v_number,
       coalesce(p_surface, 'clay')::public.court_surface,
       public.unique_slug('courts', v_park.slug::text || '-q' || v_number),
       v_name,
+      coalesce(nullif(trim(p_address), ''), v_park.address),
       coalesce(p_latitude, v_park.latitude),
       coalesce(p_longitude, v_park.longitude),
       v_park.city,
@@ -7959,6 +8074,7 @@ begin
       coalesce(p_gps_tolerance_meters, 200),
       coalesce(p_enforce_proximity, true),
       coalesce(p_call_window_seconds, 120)
+      coalesce(p_enforce_proximity, true)
     )
     returning * into v_row;
   else
@@ -7966,6 +8082,7 @@ begin
       court_number = coalesce(p_court_number, court_number),
       surface      = coalesce(p_surface::public.court_surface, surface),
       name         = coalesce(nullif(trim(p_name), ''), name),
+      address      = coalesce(nullif(trim(p_address), ''), address),
       latitude     = coalesce(p_latitude, latitude),
       longitude    = coalesce(p_longitude, longitude),
       slot_minutes = coalesce(p_slot_minutes, slot_minutes),
@@ -7976,6 +8093,7 @@ begin
       gps_tolerance_meters = coalesce(p_gps_tolerance_meters, gps_tolerance_meters),
       enforce_proximity    = coalesce(p_enforce_proximity, enforce_proximity),
       call_window_seconds  = coalesce(p_call_window_seconds, call_window_seconds)
+      enforce_proximity    = coalesce(p_enforce_proximity, enforce_proximity)
     where id = p_id
     returning * into v_row;
 
@@ -8028,3 +8146,23 @@ grant execute on function public.finish_match(uuid)                      to auth
 grant execute on function public.check_in_and_start(text)                to authenticated;
 grant execute on function public.leave_queue(uuid, text)                 to authenticated;
 grant execute on function public.join_queue(text, public.queue_mode, text) to authenticated;
+-- ---------------------------------------------------------------------
+-- Permissões das novas assinaturas
+-- ---------------------------------------------------------------------
+revoke all on function public.admin_upsert_park(
+  uuid, text, text, text, text, double precision, double precision, text, text, boolean
+) from public;
+
+grant execute on function public.admin_upsert_park(
+  uuid, text, text, text, text, double precision, double precision, text, text, boolean
+) to authenticated;
+
+revoke all on function public.admin_upsert_court(
+  uuid, uuid, smallint, text, text, text, double precision, double precision,
+  smallint, boolean, boolean, boolean, integer, integer, boolean
+) from public;
+
+grant execute on function public.admin_upsert_court(
+  uuid, uuid, smallint, text, text, text, double precision, double precision,
+  smallint, boolean, boolean, boolean, integer, integer, boolean
+) to authenticated;

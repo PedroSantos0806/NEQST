@@ -9,6 +9,7 @@ import {
   courtQr,
 } from "../lib/api";
 import { ErrorState, Loading, buttonStyle } from "../components/ui";
+import { MapPicker, type MapPosition } from "../components/MapPicker";
 import { Check, ChevronLeft, Close, Pin, Search, SurfaceIcon, Warn } from "../components/icons";
 import { SURFACE_COLOR, surfaceTextColor } from "../lib/format";
 import type { AdminCourt, AdminOverview, AdminPark, AdminUser, CourtQr } from "../lib/types";
@@ -239,13 +240,13 @@ function ParkCard({
             )}
 
           {park.courts.map((court) => (
-            <CourtRow key={court.id} court={court} onChanged={onChanged} onNotice={onNotice} />
+            <CourtRow key={court.id} court={court} park={park} onChanged={onChanged} onNotice={onNotice} />
           ))}
 
           {addingCourt
             ? (
               <CourtForm
-                parkId={park.id}
+                park={park}
                 nextNumber={Math.max(0, ...park.courts.map((c) => c.court_number)) + 1}
                 onCancel={() => setAddingCourt(false)}
                 onSaved={async () => {
@@ -268,10 +269,12 @@ function ParkCard({
 
 function CourtRow({
   court,
+  park,
   onChanged,
   onNotice,
 }: {
   court: AdminCourt;
+  park: AdminPark;
   onChanged: () => Promise<void>;
   onNotice: (text: string) => void;
 }) {
@@ -323,6 +326,7 @@ function CourtRow({
         ? (
           <CourtForm
             court={court}
+            park={park}
             onCancel={() => setEditing(false)}
             onSaved={async () => {
               setEditing(false);
@@ -465,6 +469,29 @@ function Field({
   );
 }
 
+/**
+ * Mesmo rótulo do `Field`, mas sem o `<label>` em volta: serve para
+ * blocos que já têm botões e campos próprios dentro — um `<label>`
+ * envolvendo controles rouba o clique do primeiro deles.
+ */
+function Group({
+  label,
+  children,
+  hint,
+}: {
+  label: string;
+  children: React.ReactNode;
+  hint?: string;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <span style={{ fontSize: 12, fontWeight: 700 }}>{label}</span>
+      {children}
+      {hint && <span style={{ fontSize: 12, color: "var(--muted)" }}>{hint}</span>}
+    </div>
+  );
+}
+
 function ParkForm({
   park,
   onCancel,
@@ -477,23 +504,19 @@ function ParkForm({
   const [name, setName] = useState(park?.name ?? "");
   const [district, setDistrict] = useState(park?.district ?? "");
   const [city, setCity] = useState(park?.city ?? "");
-  const [latitude, setLatitude] = useState(park ? String(park.latitude) : "");
-  const [longitude, setLongitude] = useState(park ? String(park.longitude) : "");
+  const [address, setAddress] = useState(park?.address ?? "");
+  const [position, setPosition] = useState<MapPosition | null>(
+    park ? { latitude: park.latitude, longitude: park.longitude } : null,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function useMyLocation() {
-    const { getPosition } = await import("../lib/geo");
-    try {
-      const position = await getPosition();
-      setLatitude(position.latitude.toFixed(6));
-      setLongitude(position.longitude.toFixed(6));
-    } catch (cause) {
-      setError((cause as Error).message);
-    }
-  }
-
   async function save() {
+    if (!position) {
+      setError("Marque no mapa onde fica o parque.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
@@ -502,8 +525,9 @@ function ParkForm({
         name,
         district,
         city,
-        latitude: latitude ? Number(latitude) : undefined,
-        longitude: longitude ? Number(longitude) : undefined,
+        address: address.trim() || undefined,
+        latitude: position.latitude,
+        longitude: position.longitude,
       });
       await onSaved();
     } catch (cause) {
@@ -528,22 +552,25 @@ function ParkForm({
         <input value={city} onChange={(e) => setCity(e.target.value)} style={field} />
       </Field>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        <Field label="Latitude">
-          <input value={latitude} onChange={(e) => setLatitude(e.target.value)} inputMode="decimal" style={field} />
-        </Field>
-        <Field label="Longitude">
-          <input value={longitude} onChange={(e) => setLongitude(e.target.value)} inputMode="decimal" style={field} />
-        </Field>
-      </div>
+      <Field label="Endereço" hint="Rua e número da entrada do parque. É a referência de quem vai chegar.">
+        <input
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          placeholder="Av. Exemplo, 1000 — Bairro"
+          autoComplete="off"
+          style={field}
+        />
+      </Field>
 
-      <button type="button" className="press" onClick={() => void useMyLocation()} style={{ ...buttonStyle("ghost"), minHeight: 40, fontSize: 13 }}>
-        Usar a minha localização agora
-      </button>
-      <p style={{ margin: 0, fontSize: 11, lineHeight: 1.4, color: "var(--muted)" }}>
-        A posição é o que confirma que o jogador está na quadra ao escanear o QR. Estando no
-        parque, o botão acima resolve.
-      </p>
+      <Group label="Posição no mapa">
+        <MapPicker
+          latitude={position?.latitude ?? null}
+          longitude={position?.longitude ?? null}
+          onChange={setPosition}
+          subject="parque"
+          query={[address, district, city].filter(Boolean).join(", ")}
+        />
+      </Group>
 
       {error && <p role="alert" style={{ margin: 0, fontSize: 12, color: "var(--rust)" }}>{error}</p>}
 
@@ -561,13 +588,13 @@ function ParkForm({
 
 function CourtForm({
   court,
-  parkId,
+  park,
   nextNumber,
   onCancel,
   onSaved,
 }: {
   court?: AdminCourt;
-  parkId?: string;
+  park: AdminPark;
   nextNumber?: number;
   onCancel: () => void;
   onSaved: () => Promise<void>;
@@ -580,18 +607,30 @@ function CourtForm({
   const [active, setActive] = useState(court?.is_active ?? true);
   const [radius, setRadius] = useState(String(court?.max_distance_meters ?? 1000));
   const [checkDistance, setCheckDistance] = useState(court?.enforce_proximity ?? true);
+  const [address, setAddress] = useState(court?.address ?? park.address ?? "");
+  const [position, setPosition] = useState<MapPosition | null>(
+    court ? { latitude: court.latitude, longitude: court.longitude } : null,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
+    if (!position) {
+      setError("Marque no mapa onde fica a quadra.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
       await adminUpsertCourt({
         id: court?.id,
-        parkId,
+        parkId: court ? undefined : park.id,
         name: name || undefined,
         surface,
+        address: address.trim() || undefined,
+        latitude: position.latitude,
+        longitude: position.longitude,
         slotMinutes: Number(slot) || 40,
         callWindowSeconds: Math.round((Number(tolerance.replace(",", ".")) || 2) * 60),
         hasNfcTag: nfc,
@@ -656,6 +695,30 @@ function CourtForm({
       >
         <input value={tolerance} onChange={(e) => setTolerance(e.target.value)} inputMode="decimal" style={field} />
       </Field>
+
+      <Field label="Endereço de referência" hint="Onde se chega de carro. Em parque grande não é onde fica a quadra — para isso é o mapa abaixo.">
+        <input
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          placeholder="Av. Exemplo, 1000 — Bairro"
+          autoComplete="off"
+          style={field}
+        />
+      </Field>
+
+      <Group
+        label="Onde exatamente fica a quadra"
+        hint="O ponto vermelho é a entrada do parque; o círculo é o raio do check-in."
+      >
+        <MapPicker
+          latitude={position?.latitude ?? null}
+          longitude={position?.longitude ?? null}
+          onChange={setPosition}
+          radiusMeters={checkDistance ? Number(radius) || null : null}
+          reference={{ latitude: park.latitude, longitude: park.longitude, label: park.name }}
+          query={[address, park.district, park.city].filter(Boolean).join(", ")}
+        />
+      </Group>
 
       <Toggle label="Exigir estar perto da quadra" checked={checkDistance} onChange={setCheckDistance} />
 

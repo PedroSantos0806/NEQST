@@ -155,10 +155,11 @@ site.
 Entre no app com essa conta e vá em **Perfil › Administração**, ou
 direto em `/admin`. De lá dá para:
 
-- criar e editar parques (com o botão "usar a minha localização", útil
-  quando você está no próprio parque);
+- criar e editar parques — endereço escrito e posição marcada no mapa
+  (ver [Endereço e alfinete](#endereço-e-alfinete));
 - criar e editar quadras — número e nome saem automáticos, e o piso, o
-  slot de jogo e a tag NFC são por quadra;
+  slot de jogo, o endereço de referência, o alfinete no mapa e a tag
+  NFC são por quadra;
 - **gerar o QR Code de cada quadra**, já assinado e pronto para
   imprimir (e o conteúdo para gravar numa tag NFC, quando o parque
   topar instalar uma);
@@ -169,6 +170,39 @@ direto em `/admin`. De lá dá para:
 > publicada, é porque as Edge Functions ainda não foram para o
 > Supabase — ver [`docs/deploy.md`](deploy.md#4-deploy-das-funções).
 > O mesmo vale para ler o QR e entrar na fila.
+
+### Endereço e alfinete
+
+O cadastro não pede mais latitude e longitude cruas. São duas coisas
+separadas, e elas servem a públicos diferentes:
+
+- **Endereço** — é referência de quem vai chegar de carro. Texto
+  livre: rua, número, bairro, "Portaria 2".
+- **Posição no mapa** — o alfinete. É o que o check-in compara com a
+  localização do jogador.
+
+Em parque grande as duas não coincidem: a quadra fica no meio do
+parque e o endereço é o do portão. Por isso **cada quadra tem o seu
+próprio alfinete**. Ao criar uma quadra ele nasce na posição do parque
+(era o que o banco fazia calado); arrastar o mapa é o que o põe em
+cima da quadra de verdade.
+
+No mapa:
+
+- o alfinete fica **parado no centro** e quem se move é o mapa, como
+  no aplicativo de corrida;
+- **Estou na quadra** usa o GPS do aparelho — é o caminho mais curto
+  quando se está no local;
+- **Buscar endereço** procura o que foi digitado no campo acima e leva
+  o mapa para perto (serviço do OpenStreetMap, sem chave);
+- o **círculo verde** é o raio do check-in e o **ponto vermelho** é o
+  parque; **Ver o raio inteiro** afasta a câmera até o círculo caber,
+  para conferir se a área cobre a quadra sem pegar a rua;
+- **Digitar as coordenadas** continua ali para quem já tem o par na
+  mão — e é a saída quando o mapa não carrega.
+
+Marcou errado? Reabra **Editar quadra**, arraste e salve: o alfinete
+velho é substituído.
 
 ### Testar sem estar na quadra
 

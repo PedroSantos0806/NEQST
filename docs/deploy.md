@@ -40,6 +40,15 @@ select proname from pg_proc
 where pronamespace = 'public'::regnamespace
   and proname in ('promote_to_admin', 'admin_overview', 'my_profile_summary')
 order by 1;
+
+-- o cadastro com endereço e alfinete no mapa precisa de `p_address`
+-- nas duas; sem ele a tela de administração responde que o banco está
+-- na versão anterior:
+select proname, pg_get_function_identity_arguments(oid) like '%p_address%' as tem_endereco
+from pg_proc
+where pronamespace = 'public'::regnamespace
+  and proname in ('admin_upsert_park', 'admin_upsert_court')
+order by 1;
 ```
 
 Verifique depois:
