@@ -137,6 +137,7 @@ export const adminUpsertPark = (park: {
   name?: string;
   district?: string;
   city?: string;
+  address?: string;
   latitude?: number;
   longitude?: number;
   toneColor?: string;
@@ -148,6 +149,7 @@ export const adminUpsertPark = (park: {
     p_name: park.name ?? null,
     p_district: park.district ?? null,
     p_city: park.city ?? null,
+    p_address: park.address ?? null,
     p_latitude: park.latitude ?? null,
     p_longitude: park.longitude ?? null,
     p_tone_color: park.toneColor ?? null,
@@ -161,6 +163,7 @@ export const adminUpsertCourt = (court: {
   courtNumber?: number;
   surface?: string;
   name?: string;
+  address?: string;
   latitude?: number;
   longitude?: number;
   slotMinutes?: number;
@@ -177,6 +180,7 @@ export const adminUpsertCourt = (court: {
     p_court_number: court.courtNumber ?? null,
     p_surface: court.surface ?? null,
     p_name: court.name ?? null,
+    p_address: court.address ?? null,
     p_latitude: court.latitude ?? null,
     p_longitude: court.longitude ?? null,
     p_slot_minutes: court.slotMinutes ?? null,

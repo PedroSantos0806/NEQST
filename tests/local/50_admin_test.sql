@@ -76,7 +76,7 @@ begin
   end;
 
   begin
-    perform public.admin_upsert_park(null, 'Parque Pirata', null, null, -23.5, -46.6);
+    perform public.admin_upsert_park(null, 'Parque Pirata', null, null, null, -23.5, -46.6);
     assert false, 'jogador comum não cria parque';
   exception when others then
     get stacked diagnostics v_code = returned_sqlstate;
@@ -95,9 +95,13 @@ declare
   v_park_id uuid;
 begin
   v_park := public.admin_upsert_park(
-    null, 'Parque São João Acentuação', 'Centro', 'São Paulo', -23.55, -46.63, '#2F4629', 'quadra nova'
+    null, 'Parque São João Acentuação', 'Centro', 'São Paulo',
+    'Av. das Quadras, 100', -23.55, -46.63, '#2F4629', 'quadra nova'
   );
   v_park_id := (v_park ->> 'id')::uuid;
+
+  assert v_park ->> 'address' = 'Av. das Quadras, 100',
+    format('o endereço digitado é gravado: %s', v_park ->> 'address');
 
   assert v_park ->> 'slug' = 'parque-sao-joao-acentuacao',
     format('slug sem acento: %s', v_park ->> 'slug');
@@ -109,6 +113,7 @@ begin
   assert v_court ->> 'name' = 'Quadra 01', format('nome automático: %s', v_court ->> 'name');
   assert v_court ->> 'surface' = 'clay', 'saibro por padrão';
   assert (v_court ->> 'latitude')::double precision = -23.55, 'herda a posição do parque';
+  assert v_court ->> 'address' = 'Av. das Quadras, 100', 'e herda o endereço do parque';
   assert (v_court ->> 'slot_minutes')::int = 40, 'slot padrão de 40 min';
 
   -- Segunda quadra: o número anda sozinho
@@ -155,6 +160,25 @@ begin
     'editar o slot não pode religar a verificação sozinho';
   assert (v ->> 'slot_minutes')::int = 30, 'slot mudou';
 
+  -- Alfinete próprio: a quadra no meio do parque não fica com a
+  -- coordenada do portão. É esta posição que o check-in compara.
+  v := public.admin_upsert_court(
+    null, v_park_id, null, 'clay', 'Quadra do Bosque',
+    'Portaria 2 — Av. das Quadras, 100', -23.5531, -46.6342
+  );
+  assert (v ->> 'latitude')::double precision = -23.5531,
+    format('a quadra guarda o alfinete marcado: %s', v ->> 'latitude');
+  assert (v ->> 'longitude')::double precision = -46.6342, 'e a longitude também';
+  assert v ->> 'address' = 'Portaria 2 — Av. das Quadras, 100', 'com o endereço de referência';
+
+  -- Mover o alfinete de uma quadra já cadastrada
+  v := public.admin_upsert_court(
+    (v ->> 'id')::uuid, p_latitude => -23.5540, p_longitude => -46.6350
+  );
+  assert (v ->> 'latitude')::double precision = -23.5540, 'o alfinete se move na edição';
+  assert v ->> 'address' = 'Portaria 2 — Av. das Quadras, 100',
+    'e mexer no alfinete não apaga o endereço';
+
   -- O painel enxerga o que foi criado
   v := public.admin_overview();
   assert (
@@ -166,7 +190,21 @@ begin
     select jsonb_array_length(pk -> 'courts')
     from jsonb_array_elements(v -> 'parks') pk
     where pk ->> 'id' = v_park_id::text
-  ) = 2, 'com as duas quadras';
+  ) = 3, 'com as três quadras';
+
+  -- O formulário reabre preenchido porque o painel devolve o endereço
+  assert (
+    select pk ->> 'address'
+    from jsonb_array_elements(v -> 'parks') pk
+    where pk ->> 'id' = v_park_id::text
+  ) = 'Av. das Quadras, 100', 'o painel devolve o endereço do parque';
+
+  assert (
+    select count(*)
+    from jsonb_array_elements(v -> 'parks') pk,
+         jsonb_array_elements(pk -> 'courts') c
+    where pk ->> 'id' = v_park_id::text and c ->> 'address' is not null
+  ) = 3, 'e o endereço de cada quadra';
 end $$;
 
 -- ---------------------------------------------------------------------
