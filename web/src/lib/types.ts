@@ -1,9 +1,7 @@
 /** Formatos devolvidos pelas RPCs do backend (ver docs/api.md). */
 
 export type CourtSurface = "clay" | "hard" | "grass";
-export type QueueMode = "single" | "double";
 export type PlayerState = "free" | "queued" | "playing";
-export type MatchSide = "a" | "b";
 
 export interface ParkCard {
   park_id: string;
@@ -31,23 +29,27 @@ export interface Player {
   full_name: string | null;
   initials: string;
   short_name: string;
+  role: "owner" | "partner";
+  checked_in: boolean;
 }
 
+/** O turno de um grupo na quadra. Não há adversário: o grupo joga entre si. */
 export interface MatchState {
   match_id: string;
   court_id: string;
   court_name: string;
-  mode: QueueMode;
+  entry_id: string;
+  players: Player[];
+  group_size: number;
+  group_label: string;
   slot_minutes: number;
   started_at: string;
   expires_at: string;
   ended_at: string | null;
-  winner_side: MatchSide | null;
+  end_reason: string | null;
   is_live: boolean;
   elapsed_seconds: number;
   remaining_seconds: number;
-  side_a: { entry_id: string; role: "challenger"; players: Player[] };
-  side_b: { entry_id: string | null; role: "holder"; open: boolean; players: Player[] };
 }
 
 export interface Racket {
@@ -59,8 +61,8 @@ export interface QueueItem {
   entry_id: string;
   position: number;
   position_label: string;
-  mode: QueueMode;
-  mode_label: string;
+  group_size: number;
+  group_label: string;
   status: string;
   is_called: boolean;
   call_expires_at: string | null;
@@ -103,6 +105,8 @@ export interface CourtScreen {
   total_wait_seconds: number;
   next_position_label: string;
   my_entry: QueueItem | null;
+  my_group: MyGroup | null;
+  my_request: MyJoinRequest | null;
   court_accepting: boolean;
   can_join: boolean;
   my_state: MyState;
@@ -125,10 +129,45 @@ export interface MyState {
   where?: string;
 }
 
+/** O grupo de quem está olhando — só vem para quem faz parte dele. */
+export interface MyGroup {
+  entry_id: string;
+  status: "waiting" | "ready" | "playing";
+  pin: string;
+  is_owner: boolean;
+  checked_in: boolean;
+  players: Player[];
+  group_size: number;
+  pending_requests: JoinRequestItem[];
+}
+
+export interface JoinRequestItem {
+  request_id: string;
+  user_id: string;
+  full_name: string | null;
+  short_name: string;
+  initials: string;
+  created_at: string;
+  expires_at: string;
+}
+
+/** O pedido que eu fiz para entrar no grupo de alguém. */
+export interface MyJoinRequest {
+  request_id: string;
+  entry_id: string;
+  court_id: string;
+  court_name: string;
+  expires_at: string;
+  owner_name: string | null;
+}
+
+export type PinResult =
+  | { joined: true; entry_id: string; court_id: string; status: string }
+  | { joined: false; code: "PIN_INVALID"; message: string; attempts_left: number };
+
 export interface MyQueueState {
   state: "free" | "queued" | "called" | "playing";
   entry_id?: string;
-  mode?: QueueMode;
   court_id?: string;
   court_name?: string;
   park_id?: string;
@@ -140,23 +179,11 @@ export interface MyQueueState {
   stack?: Racket[];
   stack_more?: number;
   players?: Player[];
+  group?: MyGroup | null;
+  pending_request?: MyJoinRequest | null;
   call_expires_at?: string | null;
   call_remaining_seconds?: number | null;
   match?: MatchState | null;
-}
-
-export interface PartnerCandidate {
-  user_id: string;
-  username: string;
-  handle: string;
-  full_name: string | null;
-  initials: string;
-  avatar_tone: number;
-  racket_frame_color: string;
-  racket_grip_color: string;
-  state: PlayerState;
-  available: boolean;
-  where: string | null;
 }
 
 export interface ProfileSummary {
@@ -224,6 +251,7 @@ export interface AdminCourt {
   latitude: number;
   longitude: number;
   slot_minutes: number;
+  call_window_seconds: number;
   is_active: boolean;
   status: string;
   has_qr_code: boolean;

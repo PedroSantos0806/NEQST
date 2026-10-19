@@ -1,8 +1,8 @@
 -- =====================================================================
 -- Sprint 3: o fluxo do protótipo de ponta a ponta.
 --   parques > quadras numeradas com superfície
---   partida lado A x lado B, quem ganha fica
---   check-in do próprio jogador, com janela de 5 min
+--   turno do grupo (Sprint 4: sem lado B nem "quem ganha fica")
+--   check-in do próprio jogador, com tolerância de 2 min
 --   uma fila por jogador em todo o app
 -- =====================================================================
 \set ON_ERROR_STOP on
@@ -164,24 +164,23 @@ begin
   assert jsonb_array_length(v) = 1, 'busca com @ deveria funcionar';
 end $$;
 
--- Parceiro indisponível é recusado na formação da dupla
+-- O parceiro não é mais adicionado pelo @: ele escaneia a quadra
 do $$
-declare v_code text; v_msg text;
+declare v_code text;
 begin
   perform pg_temp.scan('b0000000-0000-0000-0000-00000000000b',
                        'bbbb0000-0000-0000-0000-00000000000b', 'tok-bru-x');
   begin
-    perform public.join_queue('tok-bru-x', 'double', '@ana');
-    assert false, 'dupla com parceiro na fila deveria falhar';
+    perform public.join_queue('tok-bru-x', 'double', '@caio');
+    assert false, 'dupla pelo @ deveria ser recusada';
   exception when others then
-    get stacked diagnostics v_code = returned_sqlstate, v_msg = message_text;
-    assert v_code = 'NQ006', format('esperava NQ006, obtive %s', v_code);
-    assert v_msg like '%na fila%', format('mensagem deveria dizer onde: %s', v_msg);
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ029', format('esperava NQ029, obtive %s', v_code);
   end;
 end $$;
 
 -- =====================================================================
--- Check-in da Ana inicia a partida, com o lado B aberto
+-- Check-in da Ana inicia o turno do grupo dela
 -- =====================================================================
 set local "request.jwt.claim.sub" = 'a0000000-0000-0000-0000-00000000000a';
 
@@ -192,9 +191,10 @@ begin
                        'aaaa0000-0000-0000-0000-00000000000a', 'tok-ana-start');
   v := public.check_in_and_start('tok-ana-start');
 
-  assert (v ->> 'is_live')::boolean, format('partida deveria estar ao vivo: %s', v);
-  assert jsonb_array_length(v -> 'side_a' -> 'players') = 1, 'lado A com a Ana';
-  assert (v -> 'side_b' ->> 'open')::boolean, 'lado B aberto (adversário livre)';
+  assert (v ->> 'is_live')::boolean, format('turno deveria estar ao vivo: %s', v);
+  assert jsonb_array_length(v -> 'players') = 1, 'o grupo é só a Ana';
+  assert (v -> 'players' -> 0 ->> 'checked_in')::boolean, 'Ana fez check-in';
+  assert v -> 'side_b' is null, 'não existe mais lado B';
   assert (v ->> 'slot_minutes')::int = 40, 'slot da quadra';
   assert (v ->> 'remaining_seconds')::int between 2390 and 2400, format('restante ~40 min: %s', v ->> 'remaining_seconds');
 
@@ -216,7 +216,7 @@ begin
 end $$;
 
 -- =====================================================================
--- Bruno entra na fila e ocupa o lado livre
+-- Bruno entra na fila e espera o turno da Ana
 -- =====================================================================
 set local "request.jwt.claim.sub" = 'b0000000-0000-0000-0000-00000000000b';
 
@@ -227,10 +227,10 @@ begin
                        'aaaa0000-0000-0000-0000-00000000000a', 'tok-bru-1');
   v := public.join_queue('tok-bru-1', 'single');
   assert (v ->> 'position')::int = 1, format('Bruno é o 1º da espera: %s', v);
-  assert (v ->> 'teams_ahead')::int = 1, format('1 time à frente (a partida em curso): %s', v);
+  assert (v ->> 'teams_ahead')::int = 1, format('1 grupo à frente (o turno em curso): %s', v);
 end $$;
 
--- Não pode iniciar outra partida: a quadra está ocupada
+-- Não pode iniciar outro turno: a quadra está ocupada
 do $$
 declare v_code text;
 begin
@@ -245,91 +245,59 @@ begin
   end;
 end $$;
 
--- Mas pode ocupar o lado livre da partida em andamento
-do $$
-declare v jsonb;
-begin
-  perform pg_temp.scan('b0000000-0000-0000-0000-00000000000b',
-                       'aaaa0000-0000-0000-0000-00000000000a', 'tok-bru-3');
-  v := public.join_open_side('tok-bru-3');
-
-  assert not (v -> 'side_b' ->> 'open')::boolean, 'lado B agora ocupado';
-  assert jsonb_array_length(v -> 'side_b' -> 'players') = 1, 'Bruno no lado B';
-end $$;
-
--- =====================================================================
--- Resultado: quem ganha fica
--- =====================================================================
-
--- Quem não está em quadra não reporta
-set local "request.jwt.claim.sub" = 'c0000000-0000-0000-0000-00000000000c';
+-- Nem encerrar o turno de quem está jogando
 do $$
 declare v_code text; v_match uuid;
 begin
   select id into v_match from public.matches where ended_at is null;
   begin
-    perform public.report_match_result(v_match, 'a');
-    assert false, 'quem não jogou não deveria reportar';
+    perform public.finish_my_turn(v_match);
+    assert false, 'quem não está no grupo não encerra o turno';
   exception when others then
     get stacked diagnostics v_code = returned_sqlstate;
     assert v_code = 'NQ008', format('esperava NQ008, obtive %s', v_code);
   end;
 end $$;
 
--- Caio e Duda entram na fila (um deles será chamado)
+-- Caio entra atrás do Bruno
+set local "request.jwt.claim.sub" = 'c0000000-0000-0000-0000-00000000000c';
 do $$
 declare v jsonb;
 begin
   perform pg_temp.scan('c0000000-0000-0000-0000-00000000000c',
                        'aaaa0000-0000-0000-0000-00000000000a', 'tok-caio-1');
   v := public.join_queue('tok-caio-1', 'single');
-  assert (v ->> 'position')::int = 1, format('Caio é o 1º da espera: %s', v);
+  assert (v ->> 'position')::int = 2, format('Caio é o 2º da espera: %s', v);
 end $$;
 
-set local "request.jwt.claim.sub" = 'd0000000-0000-0000-0000-00000000000d';
-do $$
-declare v jsonb;
-begin
-  perform pg_temp.scan('d0000000-0000-0000-0000-00000000000d',
-                       'aaaa0000-0000-0000-0000-00000000000a', 'tok-duda-1');
-  v := public.join_queue('tok-duda-1', 'single');
-  assert (v ->> 'position')::int = 2, format('Duda é a 2ª: %s', v);
-end $$;
-
--- Ana (lado A) vence: ela fica, o Bruno sai, e o Caio é chamado
+-- =====================================================================
+-- A Ana devolve a quadra antes do fim: o Bruno é chamado
+-- =====================================================================
 set local "request.jwt.claim.sub" = 'a0000000-0000-0000-0000-00000000000a';
 do $$
 declare
-  v_match uuid; v jsonb; v_holder uuid; v_ana uuid; v_bruno uuid;
-  v_caio_status public.queue_entry_status; v_call timestamptz;
+  v_match uuid; v jsonb; v_ana uuid;
+  v_bruno_status public.queue_entry_status; v_call timestamptz;
 begin
-  select id into v_match from public.matches where ended_at is null;
-  select side_a_entry_id, side_b_entry_id into v_ana, v_bruno
-  from public.matches where id = v_match;
+  select id, side_a_entry_id into v_match, v_ana from public.matches where ended_at is null;
 
-  v := public.report_match_result(v_match, 'a');
-  assert v ->> 'winner_side' = 'a', format('vencedor lado A: %s', v);
-  assert v ->> 'end_reason' = 'reported', 'encerrada por relato';
-  assert not (v ->> 'is_live')::boolean, 'partida encerrada';
+  v := public.finish_my_turn(v_match);
+  assert v ->> 'end_reason' = 'finished_by_group', format('encerrado pelo grupo: %s', v);
+  assert not (v ->> 'is_live')::boolean, 'turno encerrado';
 
-  -- Ana segue mandante, com a inscrição ainda em jogo
-  select holder_entry_id into v_holder from public.courts
-  where id = 'aaaa0000-0000-0000-0000-00000000000a';
-  assert v_holder = v_ana, 'a vencedora deveria virar mandante';
+  assert (select status from public.queue_entries where id = v_ana) = 'done', 'o grupo da Ana saiu';
+  assert (select holder_entry_id from public.courts
+          where id = 'aaaa0000-0000-0000-0000-00000000000a') is null, 'ninguém fica em quadra';
 
-  assert (select status from public.queue_entries where id = v_ana) = 'playing',
-    'a mandante continua em jogo';
-  assert (select status from public.queue_entries where id = v_bruno) = 'done',
-    'quem perdeu saiu';
-
-  -- Caio foi chamado, com prazo
-  select e.status, e.call_expires_at into v_caio_status, v_call
+  -- Bruno foi chamado, com a tolerância de 2 minutos
+  select e.status, e.call_expires_at into v_bruno_status, v_call
   from public.queue_entries e
-  where e.created_by = 'c0000000-0000-0000-0000-00000000000c';
+  where e.created_by = 'b0000000-0000-0000-0000-00000000000b'
+    and e.court_id = 'aaaa0000-0000-0000-0000-00000000000a';
 
-  assert v_caio_status = 'ready', format('Caio deveria estar chamado: %s', v_caio_status);
-  assert v_call > now() and v_call <= now() + interval '301 seconds',
-    format('janela de ~5 min: %s', v_call);
+  assert v_bruno_status = 'ready', format('Bruno deveria estar chamado: %s', v_bruno_status);
+  assert v_call > now() and v_call <= now() + interval '121 seconds',
+    format('tolerância de ~2 min: %s', v_call);
 end $$;
 
 -- A notificação da vez saiu
@@ -339,37 +307,35 @@ begin
   select count(*) into v_turn
   from public.notification_outbox o
   join public.queue_entry_members m on m.entry_id = o.entry_id
-  where o.type = 'queue_turn' and m.user_id = 'c0000000-0000-0000-0000-00000000000c';
-  assert v_turn = 1, format('Caio deveria ter 1 push "É a sua vez!": %s', v_turn);
+  where o.type = 'queue_turn' and m.user_id = 'b0000000-0000-0000-0000-00000000000b';
+  assert v_turn = 1, format('Bruno deveria ter 1 push "É a sua vez!": %s', v_turn);
 end $$;
 
 -- =====================================================================
--- Caio faz o check-in e encara a mandante
+-- Bruno faz o check-in
 -- =====================================================================
-set local "request.jwt.claim.sub" = 'c0000000-0000-0000-0000-00000000000c';
+set local "request.jwt.claim.sub" = 'b0000000-0000-0000-0000-00000000000b';
 do $$
 declare v jsonb;
 begin
-  perform pg_temp.scan('c0000000-0000-0000-0000-00000000000c',
-                       'aaaa0000-0000-0000-0000-00000000000a', 'tok-caio-start');
-  v := public.check_in_and_start('tok-caio-start');
+  perform pg_temp.scan('b0000000-0000-0000-0000-00000000000b',
+                       'aaaa0000-0000-0000-0000-00000000000a', 'tok-bru-start');
+  v := public.check_in_and_start('tok-bru-start');
 
-  assert (v ->> 'is_live')::boolean, 'nova partida ao vivo';
-  assert not (v -> 'side_b' ->> 'open')::boolean, 'lado B é a mandante';
-  assert (v -> 'side_b' -> 'players' -> 0 ->> 'username') = 'ana',
-    format('a Ana deveria estar no lado B: %s', v -> 'side_b');
-  assert (v -> 'side_a' -> 'players' -> 0 ->> 'username') = 'caio', 'Caio no lado A';
+  assert (v ->> 'is_live')::boolean, 'novo turno ao vivo';
+  assert (v -> 'players' -> 0 ->> 'username') = 'bruno', format('turno do Bruno: %s', v);
+  assert jsonb_array_length(v -> 'players') = 1, 'sem adversário vindo da fila';
 end $$;
 
--- Duda ainda não é a vez
-set local "request.jwt.claim.sub" = 'd0000000-0000-0000-0000-00000000000d';
+-- Caio ainda não é a vez
+set local "request.jwt.claim.sub" = 'c0000000-0000-0000-0000-00000000000c';
 do $$
 declare v_code text;
 begin
-  perform pg_temp.scan('d0000000-0000-0000-0000-00000000000d',
-                       'aaaa0000-0000-0000-0000-00000000000a', 'tok-duda-2');
+  perform pg_temp.scan('c0000000-0000-0000-0000-00000000000c',
+                       'aaaa0000-0000-0000-0000-00000000000a', 'tok-caio-2');
   begin
-    perform public.check_in_and_start('tok-duda-2');
+    perform public.check_in_and_start('tok-caio-2');
     assert false, 'fora da vez deveria falhar';
   exception when others then
     get stacked diagnostics v_code = returned_sqlstate;
@@ -378,32 +344,25 @@ begin
 end $$;
 
 -- =====================================================================
--- Slot estourado: encerra sem vencedor e a fila anda
+-- Fim do slot: o turno acaba e a fila anda
 -- =====================================================================
 do $$
-declare v jsonb; v_match uuid; v_holder uuid; v_duda_status public.queue_entry_status;
+declare v jsonb; v_match uuid; v_caio_status public.queue_entry_status;
 begin
   select id into v_match from public.matches where ended_at is null;
-  -- Simula o relógio: o slot venceu e ninguém reportou.
+  -- Simula o relógio: o slot venceu.
   update public.matches set expires_at = now() - interval '1 second' where id = v_match;
 
   v := public.advance_expired_queues();
-  assert (v ->> 'matches_closed')::int = 1, format('1 partida encerrada: %s', v);
+  assert (v ->> 'matches_closed')::int = 1, format('1 turno encerrado: %s', v);
 
   assert (select end_reason from public.matches where id = v_match) = 'slot_expired',
     'motivo deveria ser slot_expired';
-  assert (select winner_side from public.matches where id = v_match) is null,
-    'sem vencedor quando ninguém reporta';
+  assert (select winner_side from public.matches where id = v_match) is null, 'não há vencedor';
 
-  -- Sem vencedor, a quadra fica sem mandante e os dois lados saem
-  select holder_entry_id into v_holder from public.courts
-  where id = 'aaaa0000-0000-0000-0000-00000000000a';
-  assert v_holder is null, format('quadra deveria ficar sem mandante: %s', v_holder);
-
-  -- E a Duda foi chamada
-  select status into v_duda_status from public.queue_entries
-  where created_by = 'd0000000-0000-0000-0000-00000000000d';
-  assert v_duda_status = 'ready', format('Duda deveria ser chamada: %s', v_duda_status);
+  select status into v_caio_status from public.queue_entries
+  where created_by = 'c0000000-0000-0000-0000-00000000000c' and status in ('waiting', 'ready');
+  assert v_caio_status = 'ready', format('Caio deveria ser chamado: %s', v_caio_status);
 end $$;
 
 -- =====================================================================
@@ -420,26 +379,30 @@ begin
 end $$;
 
 do $$
-declare v jsonb; v_duda public.queue_entry_status; v_elias public.queue_entry_status;
+declare v jsonb; v_caio public.queue_entry_status; v_elias public.queue_entry_status;
 begin
-  -- A janela da Duda venceu
+  -- A tolerância do Caio venceu
   update public.queue_entries set call_expires_at = now() - interval '1 second'
-  where created_by = 'd0000000-0000-0000-0000-00000000000d' and status = 'ready';
+  where created_by = 'c0000000-0000-0000-0000-00000000000c' and status = 'ready';
 
   v := public.advance_expired_queues();
   assert (v ->> 'entries_expired')::int = 1, format('1 chamada expirada: %s', v);
 
-  select status into v_duda  from public.queue_entries where created_by = 'd0000000-0000-0000-0000-00000000000d';
-  select status into v_elias from public.queue_entries where created_by = 'e0000000-0000-0000-0000-00000000000e';
+  select status into v_caio from public.queue_entries
+  where created_by = 'c0000000-0000-0000-0000-00000000000c'
+    and court_id = 'aaaa0000-0000-0000-0000-00000000000a';
+  select status into v_elias from public.queue_entries
+  where created_by = 'e0000000-0000-0000-0000-00000000000e';
 
-  assert v_duda = 'expired', format('Duda perdeu a vez: %s', v_duda);
+  assert v_caio = 'expired', format('Caio perdeu a vez: %s', v_caio);
   assert (select cancel_reason from public.queue_entries
-          where created_by = 'd0000000-0000-0000-0000-00000000000d') = 'no_show',
+          where created_by = 'c0000000-0000-0000-0000-00000000000c'
+            and court_id = 'aaaa0000-0000-0000-0000-00000000000a') = 'no_show',
     'motivo no_show';
   assert v_elias = 'ready', format('Elias assume a vez: %s', v_elias);
 end $$;
 
--- Check-in depois da janela é recusado
+-- Check-in depois da tolerância é recusado
 do $$
 declare v_code text;
 begin
@@ -450,7 +413,7 @@ begin
                        'aaaa0000-0000-0000-0000-00000000000a', 'tok-elias-2');
   begin
     perform public.check_in_and_start('tok-elias-2');
-    assert false, 'check-in fora da janela deveria falhar';
+    assert false, 'check-in fora da tolerância deveria falhar';
   exception when others then
     get stacked diagnostics v_code = returned_sqlstate;
     assert v_code = 'NQ016', format('esperava NQ016, obtive %s', v_code);
@@ -479,7 +442,7 @@ begin
   v_q := v -> 'queue' -> 0;
   assert (v_q ->> 'position')::int = 1, 'posição 1';
   assert v_q ->> 'position_label' = '1º', 'rótulo da posição';
-  assert v_q ->> 'mode_label' = 'Simples 1x1', 'rótulo da modalidade';
+  assert v_q ->> 'group_label' = 'Solo', 'rótulo do grupo';
   assert v_q -> 'racket' ->> 'frame' is not null, 'raquete com cor de aro';
   assert jsonb_array_length(v_q -> 'stack') = 1, 'pilha com a própria raquete';
   assert (v_q ->> 'stack_more')::int = 0, 'nada atrás';
@@ -600,20 +563,39 @@ begin
 end $$;
 
 -- =====================================================================
--- Duplas: os dois jogadores ficam presos à mesma fila
+-- Grupo: quem entra no grupo do amigo fica preso à mesma vaga
 -- =====================================================================
 set local "request.jwt.claim.sub" = 'f0000000-0000-0000-0000-00000000000f';
 do $$
-declare v jsonb; v_code text;
+declare v jsonb;
 begin
   perform pg_temp.scan('f0000000-0000-0000-0000-00000000000f',
                        'cccc0000-0000-0000-0000-00000000000c', 'tok-fla-1');
-  v := public.join_queue('tok-fla-1', 'double', '@caio');
-  assert jsonb_array_length(v -> 'players') = 2, format('dupla com 2: %s', v);
+  v := public.join_queue('tok-fla-1', 'single');
+  assert jsonb_array_length(v -> 'players') = 1, format('Flávia abre a vaga: %s', v);
+end $$;
 
-  -- O parceiro também fica indisponível
+set local "request.jwt.claim.sub" = 'c0000000-0000-0000-0000-00000000000c';
+do $$
+declare v_entry uuid;
+begin
+  select id into v_entry from public.queue_entries
+  where created_by = 'f0000000-0000-0000-0000-00000000000f' and status in ('waiting', 'ready');
+  perform pg_temp.scan('c0000000-0000-0000-0000-00000000000c',
+                       'cccc0000-0000-0000-0000-00000000000c', 'tok-caio-fla');
+  perform public.request_join('tok-caio-fla', v_entry);
+end $$;
+
+set local "request.jwt.claim.sub" = 'f0000000-0000-0000-0000-00000000000f';
+do $$
+declare v_request uuid;
+begin
+  select id into v_request from public.queue_join_requests
+  where user_id = 'c0000000-0000-0000-0000-00000000000c' and status = 'pending';
+  perform public.decide_join_request(v_request, true);
+
   assert (public.player_state('c0000000-0000-0000-0000-00000000000c') ->> 'state') = 'queued',
-    'o parceiro entra na mesma fila';
+    'o amigo entra na mesma fila';
   assert (public.player_state('c0000000-0000-0000-0000-00000000000c') ->> 'court_name') = 'Quadra 03',
     'na quadra certa';
 end $$;
@@ -630,4 +612,4 @@ end $$;
 
 rollback;
 
-\echo '✔ tests/local/40_sprint3_test.sql — parques, partidas com dois lados, check-in e chamada'
+\echo '✔ tests/local/40_sprint3_test.sql — parques, turnos, check-in e chamada'

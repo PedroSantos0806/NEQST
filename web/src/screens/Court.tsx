@@ -9,9 +9,9 @@ import { BottomNav } from "../components/BottomNav";
 import { CallOverlay, StartedOverlay, SuccessOverlay } from "../components/Overlays";
 import { ChevronLeft, Check, Clock, Players, ScanFrame, SurfaceIcon, Warn } from "../components/icons";
 import { ScanOverlay } from "./ScanOverlay";
-import { JoinSheet } from "./JoinSheet";
-import { checkIn, leaveQueue, reportResult } from "../lib/api";
-import type { CourtScreen, MatchSide, Player, QueueItem, ScanResult } from "../lib/types";
+import { JoinSheet, type JoinOutcome } from "./JoinSheet";
+import { cancelJoinRequest, checkIn, decideJoinRequest, finishTurn, leaveQueue } from "../lib/api";
+import type { CourtScreen, MyGroup, MyJoinRequest, Player, QueueItem, ScanResult } from "../lib/types";
 
 type Flow =
   | { kind: "none" }
@@ -29,7 +29,6 @@ export function Court() {
   const [flow, setFlow] = useState<Flow>({ kind: "none" });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [ending, setEnding] = useState(false);
   const calledFor = useRef<string | null>(null);
   const timers = useRef<number[]>([]);
 
@@ -43,7 +42,7 @@ export function Court() {
     }
   }, [data]);
 
-  // Chamaram o nosso time: a tela cheia do protótipo aparece uma vez
+  // Chamaram o nosso grupo: a tela cheia do protótipo aparece uma vez
   // por chamada — depois dela o cartão na própria quadra basta.
   useEffect(() => {
     const entry = data?.my_entry;
@@ -92,6 +91,8 @@ export function Court() {
   const match = data.match;
   const live = Boolean(match?.is_live);
   const mine = data.my_entry;
+  const group = data.my_group;
+  const request = data.my_request;
   const board = SURFACE_COLOR[court.surface] ?? "var(--green)";
   const boardText = surfaceTextColor(court.surface);
 
@@ -103,22 +104,17 @@ export function Court() {
     ? Math.max(0, Math.floor((new Date(match.expires_at).getTime() - now) / 1000))
     : 0;
 
-  const playingHere = Boolean(
-    live && !mine && data.my_state.state === "playing" && data.my_state.court_id === court.id,
-  );
+  const playingHere = group?.status === "playing";
+  const needsMyCheckIn = Boolean(playingHere && !group?.checked_in);
   const nextUpHere = Boolean(mine && !mine.is_called && mine.position === 1 && live);
-  const joinedElsewhere = Boolean(
-    !mine && data.my_state.state === "queued" && data.my_state.court_id !== court.id,
-  );
+  const joinedElsewhere = Boolean(!group && data.my_state.state !== "free" && data.my_state.court_id !== court.id);
 
-  async function onLeave() {
-    if (!mine || !confirm("Sair da fila? Você perde a posição.")) return;
+  async function act(action: () => Promise<unknown>, done?: string) {
     setBusy(true);
     try {
-      await leaveQueue(mine.entry_id);
-      calledFor.current = null;
+      await action();
       await refresh();
-      setNotice("Você saiu da fila.");
+      if (done) setNotice(done);
     } catch (cause) {
       setNotice((cause as Error).message);
     } finally {
@@ -126,37 +122,74 @@ export function Court() {
     }
   }
 
-  async function onReport(winner: MatchSide) {
-    if (!match) return;
-    setBusy(true);
-    try {
-      await reportResult(match.match_id, winner);
-      setEnding(false);
-      await refresh();
-      setNotice("Resultado registrado. Quem ganhou fica em quadra.");
-    } catch (cause) {
-      setNotice((cause as Error).message);
-    } finally {
-      setBusy(false);
-    }
+  function onLeave() {
+    if (!group) return;
+    const alone = group.group_size <= 1;
+    const question = playingHere
+      ? alone
+        ? "Sair da quadra? O turno acaba e a vez passa para o próximo."
+        : "Sair do grupo? O turno continua com os outros."
+      : alone
+        ? "Sair da fila? Você perde a posição."
+        : "Sair do grupo? A vaga continua com os outros.";
+    if (!confirm(question)) return;
+    calledFor.current = null;
+    void act(() => leaveQueue(group.entry_id), alone ? "Você saiu da fila." : "Você saiu do grupo.");
   }
 
-  // Leitura válida: ou abre a folha da fila, ou faz o check-in e começa.
+  function onFinish() {
+    if (!match || !confirm("Devolver a quadra agora? O turno acaba para o grupo todo.")) return;
+    void act(() => finishTurn(match.match_id), "Turno encerrado. O próximo da fila foi chamado.");
+  }
+
+  // Leitura válida: ou abre a folha da fila, ou faz o check-in.
   async function onRead(result: ScanResult, method: "qr" | "nfc") {
     if (result.purpose === "join") {
       setFlow({ kind: "join", scan: result, method });
       return;
     }
     try {
-      await checkIn(result.scanToken, data?.match?.side_b.open ? "open" : "auto");
+      const wasPlaying = playingHere;
+      await checkIn(result.scanToken);
       calledFor.current = null;
-      setFlow({ kind: "started" });
-      later(() => setFlow({ kind: "none" }), 2600);
+      if (wasPlaying) {
+        setFlow({ kind: "none" });
+        setNotice("Check-in feito. Bom jogo!");
+      } else {
+        setFlow({ kind: "started" });
+        later(() => setFlow({ kind: "none" }), 2600);
+      }
       await refresh();
     } catch (cause) {
       setNotice((cause as Error).message);
       setFlow({ kind: "none" });
     }
+  }
+
+  async function onJoined(outcome: JoinOutcome) {
+    if (outcome !== "opened") {
+      setFlow({ kind: "none" });
+      await refresh();
+      setNotice(
+        outcome === "joined"
+          ? "Você entrou no grupo."
+          : "Pedido enviado. Quando quem abriu a vaga aceitar, você entra no grupo — se estiver em outra fila, só sai dela nessa hora.",
+      );
+      return;
+    }
+
+    // A primeira leitura pode ser uma que já estava no ar quando o join
+    // saiu; nesse caso ela ainda não enxerga a entrada.
+    let fresh = await refresh();
+    if (!fresh?.my_entry) fresh = await refresh();
+
+    const item = fresh?.my_entry ?? null;
+    if (!item) {
+      setFlow({ kind: "none" });
+      return;
+    }
+    setFlow({ kind: "success", item });
+    later(() => setFlow({ kind: "none" }), 2300);
   }
 
   return (
@@ -207,24 +240,16 @@ export function Court() {
               {mmss(elapsed)}
             </span>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", opacity: 0.92 }}>
-              {live ? `Tempo de jogo · slot de ${court.slot_minutes} min` : "Aguardando check-in"}
+              {live ? `Tempo de quadra · turno de ${court.slot_minutes} min` : "Aguardando check-in"}
             </span>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", border: "2px solid rgba(255,255,255,.75)", borderRadius: 6, minHeight: 92 }}>
-            <Side players={match?.side_a.players ?? []} divider />
-            <Side
-              players={match?.side_b.players ?? []}
-              empty={!live ? "Sem jogo em andamento" : match?.side_b.open ? "Lado livre — entre nele" : undefined}
-            />
-          </div>
+          <GroupBoard players={live ? match?.players ?? [] : []} empty={live ? "Grupo em quadra" : "Sem jogo em andamento"} />
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 9px", background: "rgba(10,14,11,.28)", borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
               <Players size={14} />
-              {live
-                ? match?.mode === "double" ? "Duplas (2x2)" : "Jogo Simples (1x1)"
-                : "Sem modalidade"}
+              {live ? match?.group_label : "Sem grupo em quadra"}
             </span>
             <span style={{ fontSize: 12, fontWeight: 600 }}>
               {live ? `Faltam ~${Math.max(1, Math.ceil(remaining / 60))} min` : "Pronta para jogar"}
@@ -239,46 +264,54 @@ export function Court() {
         )}
 
         {/* ----------------------------- ações ----------------------------- */}
-        {playingHere && match && (
+        {playingHere && match && group && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, background: "var(--ink)", color: "var(--chalk)", borderRadius: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "var(--sage)" }}>
-                  <span className="dot" style={{ background: "var(--sage)" }} />VOCÊ ESTÁ EM QUADRA
-                </span>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Bom jogo! O placar é seu.</span>
+            <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "var(--sage)" }}>
+                <span className="dot" style={{ background: "var(--sage)" }} />SEU GRUPO ESTÁ EM QUADRA
               </span>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>
+                {needsMyCheckIn
+                  ? "Chegou? Escaneie a quadra para registrar que você está jogando."
+                  : "Bom jogo! Quem chegar atrasado entra com o PIN — o tempo segue normal."}
+              </span>
+            </span>
+
+            {needsMyCheckIn && (
               <button
                 type="button"
                 className="press"
-                onClick={() => setEnding((value) => !value)}
-                style={{ minHeight: 44, padding: "0 12px", background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 8, fontSize: 13, fontWeight: 700 }}
+                onClick={() => setFlow({ kind: "scan", purpose: "start" })}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, minHeight: 48, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--chalk)", borderRadius: 8, fontSize: 14, fontWeight: 800 }}
               >
-                Encerrar partida
+                <ScanFrame size={18} />
+                Fazer meu check-in
+              </button>
+            )}
+
+            <GroupPanel group={group} busy={busy} dark onDecide={(id, approve) =>
+              void act(() => decideJoinRequest(id, approve), approve ? "Pedido aceito." : "Pedido recusado.")} />
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                className="press"
+                disabled={busy}
+                onClick={onFinish}
+                style={{ flex: 1, minHeight: 44, padding: "0 12px", background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 8, fontSize: 13, fontWeight: 700 }}
+              >
+                Devolver a quadra
+              </button>
+              <button
+                type="button"
+                className="press"
+                disabled={busy}
+                onClick={onLeave}
+                style={{ flex: 1, minHeight: 44, padding: "0 12px", background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 8, fontSize: 13, fontWeight: 700 }}
+              >
+                Sair do grupo
               </button>
             </div>
-
-            {ending && (
-              <div className="fade" style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 10, borderTop: "1px dashed rgba(241,236,239,.3)" }}>
-                <span style={{ fontSize: 13, lineHeight: 1.4 }}>
-                  Quem ganhou? Quem ganha fica em quadra e enfrenta o próximo da fila.
-                </span>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <WinnerButton
-                    disabled={busy}
-                    onClick={() => void onReport("a")}
-                    label={sideLabel(match.side_a.players)}
-                  />
-                  {!match.side_b.open && (
-                    <WinnerButton
-                      disabled={busy}
-                      onClick={() => void onReport("b")}
-                      label={sideLabel(match.side_b.players)}
-                    />
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -287,15 +320,18 @@ export function Court() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "var(--ocre)" }}>
-                  SUA VEZ · QUADRA LIBERADA
+                  VEZ DO SEU GRUPO · QUADRA LIBERADA
                 </span>
                 <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>Faça check-in para jogar</span>
               </span>
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
                 <span className="bb" role="timer" style={{ fontSize: 34, lineHeight: 1 }}>{mmss(callLeft(mine))}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>PARA CONFIRMAR</span>
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>DE TOLERÂNCIA</span>
               </span>
             </div>
+            <span style={{ fontSize: 13, lineHeight: 1.4 }}>
+              Basta um do grupo escanear. Quem chegar depois entra com o turno rolando.
+            </span>
             <button
               type="button"
               className="press"
@@ -303,7 +339,7 @@ export function Court() {
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 56, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 16, fontWeight: 800 }}
             >
               <ScanFrame size={20} />
-              Check-in QR / NFC e iniciar jogo
+              Check-in QR / NFC e iniciar turno
             </button>
           </div>
         )}
@@ -314,14 +350,44 @@ export function Court() {
               1º
             </span>
             <span style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 13, lineHeight: 1.35 }}>
-              <strong style={{ fontSize: 14 }}>Você é o próximo</strong>
-              Faltam ~{Math.max(1, Math.ceil(remaining / 60))} min para acabar a partida atual.
-              Avisamos quando a quadra liberar para o check-in.
+              <strong style={{ fontSize: 14 }}>Seu grupo é o próximo</strong>
+              Faltam ~{Math.max(1, Math.ceil(remaining / 60))} min para acabar o turno atual.
+              Avisamos quando a quadra liberar — aí são {Math.round(court.call_window_seconds / 60)} min para o check-in.
             </span>
           </div>
         )}
 
-        {!mine && !playingHere && data.can_join && (
+        {mine && group && !playingHere && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "10px 12px", background: "var(--green)", color: "var(--chalk)", borderRadius: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600 }}>
+                <span style={{ color: "var(--sage)", display: "flex" }}><Check size={18} strokeWidth="2.6" /></span>
+                Seu grupo é o {mine.position_label} da fila
+              </span>
+              <button
+                type="button"
+                className="press"
+                disabled={busy}
+                onClick={onLeave}
+                style={{ minHeight: 40, padding: "0 12px", background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 8, fontSize: 13, fontWeight: 600 }}
+              >
+                {group.group_size <= 1 ? "Sair da fila" : "Sair do grupo"}
+              </button>
+            </div>
+            <GroupPanel group={group} busy={busy} onDecide={(id, approve) =>
+              void act(() => decideJoinRequest(id, approve), approve ? "Pedido aceito." : "Pedido recusado.")} />
+          </div>
+        )}
+
+        {request && !group && (
+          <PendingRequest
+            request={request}
+            busy={busy}
+            onCancel={() => void act(() => cancelJoinRequest(request.request_id), "Pedido cancelado.")}
+          />
+        )}
+
+        {!group && (data.can_join || joinedElsewhere) && (
           <button
             type="button"
             className="press"
@@ -329,31 +395,13 @@ export function Court() {
             style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 56, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 16, fontWeight: 800 }}
           >
             <ScanFrame size={20} />
-            Entrar na Fila
+            {data.can_join ? "Entrar na Fila" : "Entrar no grupo de um amigo"}
           </button>
         )}
 
-        {!mine && !playingHere && !data.can_join && !joinedElsewhere && !data.court_accepting && (
+        {!group && !data.can_join && !joinedElsewhere && !data.court_accepting && (
           <div style={{ padding: 12, background: "var(--chalk)", border: "1.5px dashed rgba(47,70,41,.4)", borderRadius: 10, fontSize: 13, color: "var(--green)", textAlign: "center" }}>
             Esta quadra não está aceitando fila agora.
-          </div>
-        )}
-
-        {mine && !mine.is_called && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", background: "var(--green)", color: "var(--chalk)", borderRadius: 10 }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600 }}>
-              <span style={{ color: "var(--sage)", display: "flex" }}><Check size={18} strokeWidth="2.6" /></span>
-              Você é o {mine.position_label} da fila
-            </span>
-            <button
-              type="button"
-              className="press"
-              disabled={busy}
-              onClick={() => void onLeave()}
-              style={{ minHeight: 40, padding: "0 12px", background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 8, fontSize: 13, fontWeight: 600 }}
-            >
-              Sair da fila
-            </button>
           </div>
         )}
 
@@ -361,8 +409,8 @@ export function Court() {
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--rust)", borderRadius: 10, fontSize: 13, lineHeight: 1.4 }}>
             <span style={{ color: "var(--rust)", flexShrink: 0, display: "flex" }}><Warn size={20} /></span>
             <span>
-              <strong>Você já está na fila da {data.my_state.court_name}.</strong> Saia de lá para
-              entrar nesta — uma fila por vez.
+              <strong>Você já está na fila da {data.my_state.court_name}.</strong> Uma vaga por pessoa:
+              para entrar no grupo de um amigo aqui, você sai de lá.
             </span>
           </div>
         )}
@@ -398,7 +446,7 @@ export function Court() {
         parkId={data.park.id}
         courtId={court.id}
         tab="court"
-        onScan={() => setFlow({ kind: "scan", purpose: mine?.is_called ? "start" : "join" })}
+        onScan={() => setFlow({ kind: "scan", purpose: mine?.is_called || needsMyCheckIn ? "start" : "join" })}
       />
 
       {/* --------------------------- sobreposições --------------------------- */}
@@ -417,20 +465,8 @@ export function Court() {
           scan={flow.scan}
           method={flow.method}
           onClose={() => setFlow({ kind: "none" })}
-          onJoined={async () => {
-            // A primeira leitura pode ser uma que já estava no ar quando
-            // o join saiu; nesse caso ela ainda não enxerga a entrada.
-            let fresh = await refresh();
-            if (!fresh?.my_entry) fresh = await refresh();
-
-            const item = fresh?.my_entry ?? null;
-            if (!item) {
-              setFlow({ kind: "none" });
-              return;
-            }
-            setFlow({ kind: "success", item });
-            later(() => setFlow({ kind: "none" }), 2300);
-          }}
+          onRescan={() => setFlow({ kind: "scan", purpose: "join" })}
+          onDone={onJoined}
         />
       )}
 
@@ -452,7 +488,7 @@ export function Court() {
           courtName={court.name}
           parkName={data.park.name}
           secondsLeft={callLeft(mine)}
-          modeLabel={mine.mode_label}
+          groupLabel={mine.group_label}
           onCheckIn={() => setFlow({ kind: "scan", purpose: "start" })}
           onLater={() => setFlow({ kind: "none" })}
         />
@@ -466,59 +502,122 @@ function callLeft(item: QueueItem): number {
   return Math.max(0, Math.floor((new Date(item.call_expires_at).getTime() - Date.now()) / 1000));
 }
 
-function sideLabel(players: Player[]): string {
-  if (players.length === 0) return "Adversário livre";
-  return players.map((player) => player.short_name).join(" / ");
-}
-
-function WinnerButton({ label, disabled, onClick }: { label: string; disabled: boolean; onClick: () => void }) {
+/** O grupo em quadra: iniciais num quadrado, o nome curto e quem já fez check-in. */
+function GroupBoard({ players, empty }: { players: Player[]; empty: string }) {
   return (
-    <button
-      type="button"
-      className="press"
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        flex: 1,
-        minHeight: 48,
-        background: "var(--ocre)",
-        color: "var(--ink)",
-        border: "2px solid var(--ink)",
-        borderRadius: 8,
-        fontSize: 14,
-        fontWeight: 800,
-        opacity: disabled ? 0.6 : 1,
-      }}
-    >
-      {label}
-    </button>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, padding: 10, border: "2px solid rgba(255,255,255,.75)", borderRadius: 6, minHeight: 92, alignContent: "center" }}>
+      {players.map((player) => (
+        <span key={player.user_id} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, fontSize: 13, fontWeight: 600 }}>
+          <span className="bb" style={{ display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 28, height: 28, background: "rgba(255,255,255,.18)", border: "1.5px solid currentColor", borderRadius: 6, fontSize: 16, opacity: player.checked_in ? 1 : 0.55 }}>
+            {player.initials}
+          </span>
+          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: player.checked_in ? 1 : 0.7 }}>
+            {player.short_name}
+          </span>
+        </span>
+      ))}
+      {players.length === 0 && (
+        <span style={{ gridColumn: "1 / -1", fontSize: 12, fontWeight: 600 }}>{empty}</span>
+      )}
+    </div>
   );
 }
 
-/** Um dos lados do placar: iniciais num quadrado e o nome curto. */
-function Side({ players, divider, empty }: { players: Player[]; divider?: boolean; empty?: string }) {
+/**
+ * O que só o grupo vê: o PIN para passar aos amigos, quem já está nele e
+ * os pedidos esperando resposta (só o dono aceita).
+ */
+function GroupPanel({
+  group,
+  busy,
+  dark,
+  onDecide,
+}: {
+  group: MyGroup;
+  busy: boolean;
+  dark?: boolean;
+  onDecide: (requestId: string, approve: boolean) => void;
+}) {
+  const line = dark ? "rgba(241,236,239,.3)" : "rgba(241,236,239,.35)";
+
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        gap: 8,
-        padding: 10,
-        borderRight: divider ? "2px solid rgba(255,255,255,.75)" : undefined,
-      }}
-    >
-      {players.map((player) => (
-        <span key={player.user_id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
-          <span className="bb" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, background: "rgba(255,255,255,.18)", border: "1.5px solid currentColor", borderRadius: 6, fontSize: 16 }}>
-            {player.initials}
-          </span>
-          {player.short_name}
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 10, borderTop: `1px dashed ${line}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <span style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 12, lineHeight: 1.35 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".1em", color: "var(--ocre)" }}>PIN DO GRUPO</span>
+          Passe para quem vai jogar com você. Com ele, entra direto — mesmo com o turno rolando.
         </span>
+        <span className="bb" aria-label={`PIN ${group.pin.split("").join(" ")}`} style={{ flexShrink: 0, padding: "4px 10px", background: "var(--chalk)", color: "var(--ink)", borderRadius: 8, fontSize: 32, lineHeight: 1, letterSpacing: ".18em" }}>
+          {group.pin}
+        </span>
+      </div>
+
+      <span style={{ fontSize: 12, fontWeight: 600 }}>
+        {group.players.map((player) => player.short_name).join(" · ")}
+      </span>
+
+      {group.pending_requests.map((request) => (
+        <div key={request.request_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "rgba(241,236,239,.12)", border: "1.5px solid var(--ocre)", borderRadius: 8 }}>
+          <span className="bb" style={{ display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 32, height: 32, background: "var(--ocre)", color: "var(--ink)", borderRadius: 6, fontSize: 16 }}>
+            {request.initials}
+          </span>
+          <span style={{ flexGrow: 1, minWidth: 0, fontSize: 13, lineHeight: 1.3 }}>
+            <strong>{request.full_name ?? request.short_name}</strong> quer entrar no grupo
+          </span>
+          {group.is_owner
+            ? (
+              <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  className="press"
+                  disabled={busy}
+                  onClick={() => onDecide(request.request_id, false)}
+                  style={{ minHeight: 40, padding: "0 10px", background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 8, fontSize: 12, fontWeight: 700 }}
+                >
+                  Recusar
+                </button>
+                <button
+                  type="button"
+                  className="press"
+                  disabled={busy}
+                  onClick={() => onDecide(request.request_id, true)}
+                  style={{ minHeight: 40, padding: "0 12px", background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 8, fontSize: 12, fontWeight: 800 }}
+                >
+                  Aceitar
+                </button>
+              </span>
+            )
+            : <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700 }}>Quem abriu a vaga decide</span>}
+        </div>
       ))}
-      {players.length === 0 && empty && (
-        <span style={{ fontSize: 12, fontWeight: 600 }}>{empty}</span>
-      )}
+    </div>
+  );
+}
+
+function PendingRequest({
+  request,
+  busy,
+  onCancel,
+}: {
+  request: MyJoinRequest;
+  busy: boolean;
+  onCancel: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10 }}>
+      <span style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 13, lineHeight: 1.35 }}>
+        <strong style={{ fontSize: 14 }}>Pedido enviado</strong>
+        Esperando {request.owner_name ?? "quem abriu a vaga"} aceitar você no grupo.
+      </span>
+      <button
+        type="button"
+        className="press"
+        disabled={busy}
+        onClick={onCancel}
+        style={{ flexShrink: 0, minHeight: 40, padding: "0 12px", background: "transparent", color: "var(--green)", border: "1.5px solid var(--green)", borderRadius: 8, fontSize: 13, fontWeight: 700 }}
+      >
+        Cancelar
+      </button>
     </div>
   );
 }
@@ -546,7 +645,7 @@ function QueueRow({ item }: { item: QueueItem }) {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 3, flexGrow: 1, minWidth: 0 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700 }}>
-          {item.team_label ?? "Time"}
+          {item.team_label ?? "Grupo"}
           {item.is_mine && (
             <span style={{ padding: "2px 6px", background: "var(--ocre)", color: "var(--ink)", borderRadius: 4, fontSize: 10, fontWeight: 800, letterSpacing: ".08em" }}>
               VOCÊ
@@ -557,7 +656,7 @@ function QueueRow({ item }: { item: QueueItem }) {
           {players}
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase" }}>
-          <span>{item.mode_label}</span>
+          <span>{item.group_label}</span>
           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <Clock size={12} strokeWidth="2.4" />
             <span className="bb" style={{ fontSize: 17, lineHeight: 1, letterSpacing: ".03em", textTransform: "none" }}>

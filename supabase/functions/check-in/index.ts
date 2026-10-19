@@ -1,23 +1,19 @@
 /**
- * POST /functions/v1/check-in   (Sprint 3)
+ * POST /functions/v1/check-in   (Sprint 3, revisto na Sprint 4)
  *
- * O "Check-in para jogar" do protótipo: o jogador chamado escaneia o QR
- * ou encosta no totem NFC da quadra, e a partida começa. Num parque
- * público não existe operador — quem libera o placar é quem vai jogar.
+ * O "Check-in para jogar": quem é do grupo chamado escaneia o QR ou
+ * encosta no totem NFC da quadra. Um check-in basta para o turno
+ * começar; quem é do grupo e chega depois escaneia também, e fica
+ * registrado que está em quadra.
  *
- * Body: { scanToken: string, side?: "auto" | "open" }
- *   "auto" (padrão) inicia a partida com o time na vez.
- *   "open" ocupa o lado livre de uma partida em andamento
- *          ("Adversário livre" na tela).
- *
- * 200: o placar da partida (match_state)
+ * Body: { scanToken: string }
+ * 201:  o turno (match_state)
  */
 import { ApiError, json, postgrestError, readJson, requireMethod, serve } from "../_shared/http.ts";
 import { requireUser } from "../_shared/supabase.ts";
 
 interface CheckInRequest {
   scanToken?: string;
-  side?: "auto" | "open";
 }
 
 serve(async (req) => {
@@ -34,13 +30,9 @@ serve(async (req) => {
     );
   }
 
-  const side = body.side ?? "auto";
-  if (side !== "auto" && side !== "open") {
-    throw new ApiError("INVALID_SIDE", "side deve ser 'auto' ou 'open'.", 400);
-  }
-
-  const rpc = side === "open" ? "join_open_side" : "check_in_and_start";
-  const { data, error } = await client.rpc(rpc, { p_scan_token: body.scanToken });
+  const { data, error } = await client.rpc("check_in_and_start", {
+    p_scan_token: body.scanToken,
+  });
 
   if (error) postgrestError(error);
 

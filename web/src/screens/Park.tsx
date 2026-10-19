@@ -207,7 +207,7 @@ function CourtCard({ court, onOpen }: { court: CourtScreen; onOpen: () => void }
       <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", paddingTop: 10, borderTop: "1px dashed rgba(47,70,41,.3)", fontSize: 12, fontWeight: 600, color: "var(--green)" }}>
         <span>
           {live
-            ? court.match?.mode === "double" ? "Duplas (2x2) em quadra" : "Simples (1x1) em quadra"
+            ? `${court.match?.group_label ?? "Grupo"} em quadra`
             : "Quadra livre"}
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>

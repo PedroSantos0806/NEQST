@@ -65,6 +65,21 @@ export function useLiveCourt(courtId: string | undefined) {
         table: "matches",
         filter: `court_id=eq.${courtId}`,
       }, () => void refresh())
+      // Alguém entrou ou saiu de um grupo sem a vaga mudar de status.
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "queue_entry_members",
+        filter: `court_id=eq.${courtId}`,
+      }, () => void refresh())
+      // Pedido para entrar no grupo: o dono vê na hora. O RLS só entrega
+      // a quem é do grupo e a quem pediu.
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "queue_join_requests",
+        filter: `court_id=eq.${courtId}`,
+      }, () => void refresh())
       .on("postgres_changes", {
         event: "UPDATE",
         schema: "public",

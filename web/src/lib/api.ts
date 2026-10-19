@@ -12,15 +12,13 @@ import type {
   AppRole,
   CourtQr,
   CourtScreen,
-  MatchSide,
   MatchState,
   MyQueueState,
   PaletteColor,
   ParkCard,
   ParkScreen,
-  PartnerCandidate,
+  PinResult,
   ProfileSummary,
-  QueueMode,
   ScanResult,
 } from "./types";
 
@@ -53,9 +51,6 @@ export const matchState = (matchId: string) => rpc<MatchState>("match_state", { 
 
 export const profileSummary = () => rpc<ProfileSummary>("my_profile_summary");
 
-export const searchPartners = (query: string) =>
-  rpc<PartnerCandidate[]>("search_partners", { p_query: query || null, p_limit: 20 });
-
 export async function racketPalette(): Promise<PaletteColor[]> {
   const { data, error } = await supabase
     .from("racket_palette")
@@ -79,7 +74,7 @@ export const updateProfile = (patch: {
   });
 
 // ---------------------------------------------------------------------
-// Fila e partida
+// Fila, grupo e turno
 // ---------------------------------------------------------------------
 
 /**
@@ -98,18 +93,52 @@ export function scanCourt(input: {
   return callFunction<ScanResult>("scan-court", { body: input });
 }
 
-export const joinQueue = (input: { scanToken: string; mode: QueueMode; partner?: string | null }) =>
-  callFunction("join-queue", { body: input });
+/** Abre uma vaga na fila — sozinho; os amigos entram nela depois. */
+export const joinQueue = (scanToken: string) =>
+  callFunction("join-queue", { body: { scanToken } });
 
+/**
+ * Pede para entrar no grupo de alguém. Quem já está em outra fila
+ * recebe NQ014; com `leaveCurrent`, sai dela e pede na mesma chamada.
+ */
+export const requestJoin = (scanToken: string, entryId: string, leaveCurrent = false) =>
+  rpc<{ request_id: string; status: string }>("request_join", {
+    p_scan_token: scanToken,
+    p_entry_id: entryId,
+    p_leave_current: leaveCurrent,
+  });
+
+/** Entra direto com o PIN do grupo. PIN errado volta como resultado, não como erro. */
+export const joinWithPin = (scanToken: string, pin: string, leaveCurrent = false) =>
+  rpc<PinResult>("join_with_pin", {
+    p_scan_token: scanToken,
+    p_pin: pin,
+    p_leave_current: leaveCurrent,
+  });
+
+export const decideJoinRequest = (requestId: string, approve: boolean) =>
+  rpc<{ request_id: string; status: string; reason?: string }>("decide_join_request", {
+    p_request_id: requestId,
+    p_approve: approve,
+  });
+
+export const cancelJoinRequest = (requestId: string) =>
+  rpc("cancel_join_request", { p_request_id: requestId });
+
+/** Sai do grupo. A vaga continua com quem ficou; só some quando sai o último. */
 export const leaveQueue = (entryId: string, reason?: string) =>
   callFunction("leave-queue", { body: { entryId, reason: reason ?? null } });
 
-/** Check-in na quadra: libera o placar e inicia a partida. */
-export const checkIn = (scanToken: string, side: "auto" | "open" = "auto") =>
-  callFunction<MatchState>("check-in", { body: { scanToken, side } });
+/**
+ * Check-in na quadra. O primeiro do grupo chamado começa o turno; quem
+ * é do grupo e chega depois só registra que está em quadra.
+ */
+export const checkIn = (scanToken: string) =>
+  callFunction<MatchState>("check-in", { body: { scanToken } });
 
-export const reportResult = (matchId: string, winner: MatchSide) =>
-  callFunction<MatchState>("match", { body: { matchId, winner } });
+/** O grupo devolve a quadra antes do fim do turno. */
+export const finishTurn = (matchId: string) =>
+  callFunction<MatchState>("match", { body: { matchId } });
 
 export const registerWebPush = (subscription: PushSubscriptionJSON) =>
   callFunction("register-web-push", { body: subscription });
@@ -173,6 +202,7 @@ export const adminUpsertCourt = (court: {
   maxDistanceMeters?: number;
   gpsToleranceMeters?: number;
   enforceProximity?: boolean;
+  callWindowSeconds?: number;
 }) =>
   rpc("admin_upsert_court", {
     p_id: court.id ?? null,
@@ -190,6 +220,7 @@ export const adminUpsertCourt = (court: {
     p_max_distance_meters: court.maxDistanceMeters ?? null,
     p_gps_tolerance_meters: court.gpsToleranceMeters ?? null,
     p_enforce_proximity: court.enforceProximity ?? null,
+    p_call_window_seconds: court.callWindowSeconds ?? null,
   });
 
 /**
