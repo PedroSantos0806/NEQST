@@ -41,14 +41,22 @@ where pronamespace = 'public'::regnamespace
   and proname in ('promote_to_admin', 'admin_overview', 'my_profile_summary')
 order by 1;
 
--- o cadastro com endereço e alfinete no mapa precisa de `p_address`
--- nas duas; sem ele a tela de administração responde que o banco está
--- na versão anterior:
-select proname, pg_get_function_identity_arguments(oid) like '%p_address%' as tem_endereco
+-- o cadastro de quadras precisa de `p_address` (endereço e alfinete) e
+-- de `p_call_window_seconds` (tolerância de chamada) na MESMA função,
+-- e de uma assinatura só. Sem isso a tela de administração responde
+-- que o banco está na versão anterior — ou o Postgres recusa a chamada
+-- com `is not unique`:
+select proname,
+       count(*) as assinaturas,
+       bool_or(pg_get_function_identity_arguments(oid) like '%p_address%') as tem_endereco,
+       bool_or(pg_get_function_identity_arguments(oid) like '%p_call_window_seconds%') as tem_tolerancia
 from pg_proc
 where pronamespace = 'public'::regnamespace
-  and proname in ('admin_upsert_park', 'admin_upsert_court')
+  and proname in ('admin_upsert_park', 'admin_upsert_court', 'admin_overview')
+group by proname
 order by 1;
+-- esperado: uma linha por função, `assinaturas` = 1 em todas, e
+-- admin_upsert_court com as duas colunas em `t`.
 ```
 
 Verifique depois:

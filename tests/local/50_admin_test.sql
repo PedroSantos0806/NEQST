@@ -205,6 +205,53 @@ begin
          jsonb_array_elements(pk -> 'courts') c
     where pk ->> 'id' = v_park_id::text and c ->> 'address' is not null
   ) = 3, 'e o endereço de cada quadra';
+
+  -- Endereço e tolerância de chamada convivem: as duas entregas
+  -- mexeram nesta função ao mesmo tempo e a resolução do conflito
+  -- perdeu uma delas.
+  assert (
+    select (c ->> 'call_window_seconds')::int
+    from jsonb_array_elements(v -> 'parks') pk,
+         jsonb_array_elements(pk -> 'courts') c
+    where pk ->> 'id' = v_park_id::text and c ->> 'name' = 'Quadra do Bosque'
+  ) = 120, 'e a tolerância de chamada de cada quadra';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Uma assinatura de cada: duas versões conviventes travam tudo
+--
+-- Com todos os parâmetros opcionais, duas versões da mesma função
+-- deixam qualquer chamada ambígua ("is not unique"). Foi o que
+-- aconteceu quando dois ramos criaram cada um a sua `admin_upsert_court`
+-- e o `drop` de um nomeava uma assinatura que o outro já havia
+-- derrubado. É barato garantir que não volte.
+-- ---------------------------------------------------------------------
+do $$
+declare v_name text; v_count int;
+begin
+  foreach v_name in array array['admin_upsert_court', 'admin_upsert_park', 'admin_overview']
+  loop
+    select count(*) into v_count
+    from pg_proc
+    where pronamespace = 'public'::regnamespace and proname = v_name;
+
+    assert v_count = 1, format(
+      '%s tem %s assinaturas vivas; deveria ter 1. Alguma migration criou uma '
+      'versão nova sem derrubar a anterior pelo nome completo. Assinaturas: %s',
+      v_name, v_count,
+      (select string_agg(pg_get_function_identity_arguments(oid), ' | ')
+         from pg_proc
+        where pronamespace = 'public'::regnamespace and proname = v_name)
+    );
+  end loop;
+
+  -- E a que sobrou é a completa
+  assert (
+    select pg_get_function_identity_arguments(oid) like '%p_address%'
+       and pg_get_function_identity_arguments(oid) like '%p_call_window_seconds%'
+    from pg_proc
+    where pronamespace = 'public'::regnamespace and proname = 'admin_upsert_court'
+  ), 'admin_upsert_court precisa de p_address e p_call_window_seconds juntos';
 end $$;
 
 -- ---------------------------------------------------------------------
