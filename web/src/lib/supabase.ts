@@ -96,7 +96,7 @@ export class ApiError extends Error {
 
 /**
  * Traduz o erro das RPCs do Postgres. O backend sinaliza regra de
- * negócio por SQLSTATE (NQ001..NQ029) — ver docs/api.md.
+ * negócio por SQLSTATE (NQ001..NQ035) — ver docs/api.md.
  */
 const RPC_MESSAGES: Record<string, string> = {
   NQ001: "Faça login para continuar.",
@@ -111,6 +111,10 @@ const RPC_MESSAGES: Record<string, string> = {
   NQ027: "Este pedido não está mais pendente.",
   NQ028: "Muitas tentativas de PIN. Tente de novo em alguns minutos.",
   NQ029: "O parceiro entra escaneando a quadra e pedindo para entrar no seu grupo.",
+  NQ030: "Esta quadra usa o QR Code da placa.",
+  NQ031: "Alguém já abriu a fila desta quadra. Peça o QR para quem está nela.",
+  NQ033: "Só quem organiza a fila desta quadra faz isso.",
+  NQ034: "A fila desta quadra não está aberta.",
 };
 
 export function rpcError(error: { code?: string; message?: string } | null): ApiError {

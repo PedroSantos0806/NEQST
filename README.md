@@ -15,6 +15,10 @@ Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
   lugar e os amigos entram nela escaneando a quadra (o dono aceita, ou
   com o PIN do grupo), turno fixo sem "quem ganha fica", tolerância de 2
   minutos no check-in.
+- [Sprint 5](docs/sprint5.md) — a fila com anfitrião: um piloto sem QR
+  na placa. A primeira pessoa com o app abre a fila, quem chega depois
+  entra pelo QR na tela de quem já está nela, e o painel do piloto conta
+  a adesão.
 
 O que difere entre web e app (push, QR Code, CORS, login) está em
 [docs/plataformas.md](docs/plataformas.md).
@@ -188,6 +192,11 @@ tela.
 grupo, saída da fila atual para entrar no grupo do amigo, herança da
 vaga, turno fixo e tolerância de check-in configurável
 ([`docs/sprint4.md`](docs/sprint4.md)).
+
+**Sprint 5:** a fila com anfitrião — modo da quadra sem nada na placa,
+vagas sem app, convite que troca a cada 30 s com a distância conferida
+na hora de entrar, check-in pelo botão com GPS e a aba Piloto na
+administração ([`docs/sprint5.md`](docs/sprint5.md)).
 
 Sugestões que ficaram registradas para depois, em
 [`docs/sprint2.md`](docs/sprint2.md#o-que-não-entrou): rate limiting no

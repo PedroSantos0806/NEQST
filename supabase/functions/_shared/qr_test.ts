@@ -2,8 +2,10 @@ import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/asse
 import {
   buildCourtQrPayload,
   buildCourtQrUrl,
+  buildHostInviteUrl,
   InvalidQrError,
   parseCourtQrPayload,
+  parseHostInvitePayload,
   signCourt,
   timingSafeEqual,
   verifyCourtQrPayload,
@@ -140,6 +142,33 @@ Deno.test("parse rejeita URLs que não são de quadra", () => {
   );
   assertThrows(
     () => parseCourtQrPayload(`https://app.neqst.com.br/q/nao-e-uuid?v=1&s=${"a".repeat(32)}`),
+    InvalidQrError,
+  );
+});
+
+const INVITE = "AbCdEfGhIjKlMnOpQrStUv-_";
+
+Deno.test("convite do anfitrião: lê o App Link e o esquema próprio", () => {
+  const url = buildHostInviteUrl(INVITE, "https://app.neqst.com.br/");
+  assertEquals(url, `https://app.neqst.com.br/q/h/${INVITE}`);
+  assertEquals(parseHostInvitePayload(url), INVITE);
+  assertEquals(parseHostInvitePayload(`${url}/`), INVITE);
+  assertEquals(parseHostInvitePayload(`neqst:h1:${INVITE}`), INVITE);
+});
+
+Deno.test("convite do anfitrião: o QR da placa não é convite", async () => {
+  assertEquals(
+    parseHostInvitePayload(await buildCourtQrUrl(COURT, 1, SECRET, "https://app.neqst.com.br")),
+    null,
+  );
+  assertEquals(parseHostInvitePayload(await buildCourtQrPayload(COURT, 1, SECRET)), null);
+  assertEquals(parseHostInvitePayload("qualquer coisa"), null);
+});
+
+Deno.test("convite do anfitrião: código fora do formato é recusado", () => {
+  assertThrows(() => parseHostInvitePayload("https://app.neqst.com.br/q/h/curto"), InvalidQrError);
+  assertThrows(
+    () => parseHostInvitePayload("neqst:h1:tem espaço e é longo demais!!"),
     InvalidQrError,
   );
 });
