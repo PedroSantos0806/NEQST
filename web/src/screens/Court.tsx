@@ -7,10 +7,12 @@ import { ErrorState, Loading } from "../components/ui";
 import { RacketStack } from "../components/Racket";
 import { BottomNav } from "../components/BottomNav";
 import { CallOverlay, StartedOverlay, SuccessOverlay } from "../components/Overlays";
-import { ChevronLeft, Check, Clock, Players, ScanFrame, SurfaceIcon, Warn } from "../components/icons";
+import { ChevronLeft, Check, Clock, Pin, Players, QrIcon, ScanFrame, SurfaceIcon, Warn } from "../components/icons";
 import { ScanOverlay } from "./ScanOverlay";
 import { JoinSheet, type JoinOutcome } from "./JoinSheet";
-import { cancelJoinRequest, checkIn, decideJoinRequest, finishTurn, leaveQueue } from "../lib/api";
+import { AskForQr, HostOpenSheet, HostPanel, InviteQr } from "./Host";
+import { cancelJoinRequest, checkIn, confirmAtCourt, decideJoinRequest, finishTurn, leaveQueue } from "../lib/api";
+import { LocationError } from "../lib/geo";
 import type { CourtScreen, MyGroup, MyJoinRequest, Player, QueueItem, ScanResult } from "../lib/types";
 
 type Flow =
@@ -19,7 +21,9 @@ type Flow =
   | { kind: "join"; scan: ScanResult; method: "qr" | "nfc" }
   | { kind: "success"; item: QueueItem }
   | { kind: "started" }
-  | { kind: "call" };
+  | { kind: "call" }
+  | { kind: "host-open" }
+  | { kind: "invite" };
 
 export function Court() {
   const { courtId } = useParams<{ courtId: string }>();
@@ -93,6 +97,10 @@ export function Court() {
   const mine = data.my_entry;
   const group = data.my_group;
   const request = data.my_request;
+  // Piloto sem nada na placa: entra-se pelo QR na tela de alguém da
+  // fila, e o check-in é o botão "Entrando na quadra".
+  const hostMode = court.queue_mode === "host";
+  const host = data.host ?? null;
   const board = SURFACE_COLOR[court.surface] ?? "var(--green)";
   const boardText = surfaceTextColor(court.surface);
 
@@ -148,9 +156,39 @@ export function Court() {
       setFlow({ kind: "join", scan: result, method });
       return;
     }
+    await finishCheckIn(result.scanToken);
+  }
+
+  /**
+   * Na quadra com placa, o check-in é escanear o QR ou o NFC. No modo
+   * anfitrião não há o que escanear: o botão manda a localização, e o
+   * servidor confere a distância antes de começar o turno.
+   */
+  async function startCheckIn() {
+    if (!hostMode) {
+      setFlow({ kind: "scan", purpose: "start" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const scan = await confirmAtCourt(court.id, "start");
+      await finishCheckIn(scan.scanToken);
+    } catch (cause) {
+      setNotice(
+        cause instanceof LocationError && cause.kind === "denied"
+          ? "Libere a localização para o site — é assim que confirmamos que você está na quadra."
+          : (cause as Error).message,
+      );
+      setFlow({ kind: "none" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishCheckIn(scanToken: string) {
     try {
       const wasPlaying = playingHere;
-      await checkIn(result.scanToken);
+      await checkIn(scanToken);
       calledFor.current = null;
       if (wasPlaying) {
         setFlow({ kind: "none" });
@@ -244,7 +282,12 @@ export function Court() {
             </span>
           </div>
 
-          <GroupBoard players={live ? match?.players ?? [] : []} empty={live ? "Grupo em quadra" : "Sem jogo em andamento"} />
+          <GroupBoard
+            players={live ? match?.players ?? [] : []}
+            empty={live
+              ? match?.is_offline ? match.offline_label ?? "Grupo sem app" : "Grupo em quadra"
+              : "Sem jogo em andamento"}
+          />
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 9px", background: "rgba(10,14,11,.28)", borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
@@ -263,6 +306,42 @@ export function Court() {
           </p>
         )}
 
+        {/* ------------------------ fila com anfitrião ------------------------ */}
+        {data.can_open_host && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: "var(--chalk)", border: "2px solid var(--green)", borderRadius: 12 }}>
+            <span style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13, lineHeight: 1.4 }}>
+              <strong style={{ fontSize: 15 }}>Ninguém abriu a fila desta quadra ainda</strong>
+              Você é o primeiro com o app. Conte quem está jogando e quem já espera, e a fila
+              passa a andar pelo app — quem chegar depois entra pelo QR na sua tela.
+            </span>
+            <button
+              type="button"
+              className="press"
+              onClick={() => setFlow({ kind: "host-open" })}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 56, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 16, fontWeight: 800 }}
+            >
+              <Players size={20} />
+              Começar a fila aqui
+            </button>
+          </div>
+        )}
+
+        {host?.is_me && (
+          <HostPanel court={data} busy={busy} onAct={(action, done) => void act(action, done)} />
+        )}
+
+        {host?.can_show_invite && (
+          <button
+            type="button"
+            className="press"
+            onClick={() => setFlow({ kind: "invite" })}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 52, background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 15, fontWeight: 800 }}
+          >
+            <QrIcon size={20} />
+            Mostrar QR para quem chegou
+          </button>
+        )}
+
         {/* ----------------------------- ações ----------------------------- */}
         {playingHere && match && group && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, background: "var(--ink)", color: "var(--chalk)", borderRadius: 10 }}>
@@ -272,7 +351,9 @@ export function Court() {
               </span>
               <span style={{ fontSize: 14, fontWeight: 600 }}>
                 {needsMyCheckIn
-                  ? "Chegou? Escaneie a quadra para registrar que você está jogando."
+                  ? hostMode
+                    ? "Chegou? Toque em “Entrando na quadra” para registrar que você está jogando."
+                    : "Chegou? Escaneie a quadra para registrar que você está jogando."
                   : "Bom jogo! Quem chegar atrasado entra com o PIN — o tempo segue normal."}
               </span>
             </span>
@@ -281,11 +362,12 @@ export function Court() {
               <button
                 type="button"
                 className="press"
-                onClick={() => setFlow({ kind: "scan", purpose: "start" })}
+                disabled={busy}
+                onClick={() => void startCheckIn()}
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, minHeight: 48, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--chalk)", borderRadius: 8, fontSize: 14, fontWeight: 800 }}
               >
-                <ScanFrame size={18} />
-                Fazer meu check-in
+                {hostMode ? <Pin size={18} /> : <ScanFrame size={18} />}
+                {hostMode ? "Entrando na quadra" : "Fazer meu check-in"}
               </button>
             )}
 
@@ -330,16 +412,19 @@ export function Court() {
               </span>
             </div>
             <span style={{ fontSize: 13, lineHeight: 1.4 }}>
-              Basta um do grupo escanear. Quem chegar depois entra com o turno rolando.
+              {hostMode
+                ? "Basta um do grupo tocar no botão, já na quadra. Quem chegar depois entra com o turno rolando."
+                : "Basta um do grupo escanear. Quem chegar depois entra com o turno rolando."}
             </span>
             <button
               type="button"
               className="press"
-              onClick={() => setFlow({ kind: "scan", purpose: "start" })}
+              disabled={busy}
+              onClick={() => void startCheckIn()}
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 56, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 16, fontWeight: 800 }}
             >
-              <ScanFrame size={20} />
-              Check-in QR / NFC e iniciar turno
+              {hostMode ? <Pin size={20} /> : <ScanFrame size={20} />}
+              {hostMode ? "Entrando na quadra" : "Check-in QR / NFC e iniciar turno"}
             </button>
           </div>
         )}
@@ -387,6 +472,10 @@ export function Court() {
           />
         )}
 
+        {hostMode && host && !group && (data.can_join || joinedElsewhere) && (
+          <AskForQr hostName={host.host_name} />
+        )}
+
         {!group && (data.can_join || joinedElsewhere) && (
           <button
             type="button"
@@ -395,11 +484,13 @@ export function Court() {
             style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 56, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 16, fontWeight: 800 }}
           >
             <ScanFrame size={20} />
-            {data.can_join ? "Entrar na Fila" : "Entrar no grupo de um amigo"}
+            {hostMode
+              ? "Escanear o QR de alguém da fila"
+              : data.can_join ? "Entrar na Fila" : "Entrar no grupo de um amigo"}
           </button>
         )}
 
-        {!group && !data.can_join && !joinedElsewhere && !data.court_accepting && (
+        {!group && !data.can_join && !joinedElsewhere && !data.court_accepting && !data.can_open_host && (
           <div style={{ padding: 12, background: "var(--chalk)", border: "1.5px dashed rgba(47,70,41,.4)", borderRadius: 10, fontSize: 13, color: "var(--green)", textAlign: "center" }}>
             Esta quadra não está aceitando fila agora.
           </div>
@@ -432,7 +523,9 @@ export function Court() {
         {data.queue.length === 0
           ? (
             <div style={{ padding: 20, border: "1.5px dashed rgba(47,70,41,.4)", borderRadius: 12, textAlign: "center", fontSize: 14, color: "var(--green)" }}>
-              Ninguém na fila. Faça check-in e jogue agora.
+              {hostMode && !host
+                ? "A fila desta quadra ainda não começou no app."
+                : "Ninguém na fila. Faça check-in e jogue agora."}
             </div>
           )
           : (
@@ -446,7 +539,7 @@ export function Court() {
         parkId={data.park.id}
         courtId={court.id}
         tab="court"
-        onScan={() => setFlow({ kind: "scan", purpose: mine?.is_called || needsMyCheckIn ? "start" : "join" })}
+        onScan={() => (mine?.is_called || needsMyCheckIn ? void startCheckIn() : setFlow({ kind: "scan", purpose: "join" }))}
       />
 
       {/* --------------------------- sobreposições --------------------------- */}
@@ -489,10 +582,30 @@ export function Court() {
           parkName={data.park.name}
           secondsLeft={callLeft(mine)}
           groupLabel={mine.group_label}
-          onCheckIn={() => setFlow({ kind: "scan", purpose: "start" })}
+          locationCheckIn={hostMode}
+          onCheckIn={() => void startCheckIn()}
           onLater={() => setFlow({ kind: "none" })}
         />
       )}
+
+      {flow.kind === "host-open" && (
+        <HostOpenSheet
+          court={data}
+          onClose={() => setFlow({ kind: "none" })}
+          onOpened={() => {
+            setFlow({ kind: "none" });
+            setNotice("Fila aberta. Mostre o QR para quem chegar — e marque aqui quando os grupos sem app entrarem.");
+            void refresh();
+          }}
+          onAlreadyOpen={(message) => {
+            setFlow({ kind: "none" });
+            setNotice(message);
+            void refresh();
+          }}
+        />
+      )}
+
+      {flow.kind === "invite" && <InviteQr court={data} onClose={() => setFlow({ kind: "none" })} />}
     </>
   );
 }
@@ -623,7 +736,9 @@ function PendingRequest({
 }
 
 function QueueRow({ item }: { item: QueueItem }) {
-  const players = item.players.map((player) => player.full_name ?? player.short_name).join(" · ");
+  const players = item.is_offline
+    ? "Sem o app no celular"
+    : item.players.map((player) => player.full_name ?? player.short_name).join(" · ");
 
   return (
     <div
@@ -646,6 +761,11 @@ function QueueRow({ item }: { item: QueueItem }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 3, flexGrow: 1, minWidth: 0 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700 }}>
           {item.team_label ?? "Grupo"}
+          {item.is_offline && (
+            <span style={{ padding: "2px 6px", border: "1.5px solid currentColor", borderRadius: 4, fontSize: 10, fontWeight: 800, letterSpacing: ".08em" }}>
+              SEM APP
+            </span>
+          )}
           {item.is_mine && (
             <span style={{ padding: "2px 6px", background: "var(--ocre)", color: "var(--ink)", borderRadius: 4, fontSize: 10, fontWeight: 800, letterSpacing: ".08em" }}>
               VOCÊ
@@ -656,7 +776,7 @@ function QueueRow({ item }: { item: QueueItem }) {
           {players}
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase" }}>
-          <span>{item.group_label}</span>
+          {!item.is_offline && <span>{item.group_label}</span>}
           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <Clock size={12} strokeWidth="2.4" />
             <span className="bb" style={{ fontSize: 17, lineHeight: 1, letterSpacing: ".03em", textTransform: "none" }}>

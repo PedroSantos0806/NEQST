@@ -47,6 +47,8 @@ export interface CourtRow {
   has_qr_code: boolean;
   has_nfc_tag: boolean;
   qr_secret_version: number;
+  /** "fixed_qr": QR da placa ou NFC. "host": QR na tela de quem está na fila (Sprint 5). */
+  queue_mode: "fixed_qr" | "host";
 }
 
 export interface QueuePlayer {

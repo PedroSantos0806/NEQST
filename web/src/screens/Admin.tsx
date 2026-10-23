@@ -12,6 +12,7 @@ import { ErrorState, Loading, buttonStyle } from "../components/ui";
 import { MapPicker, type MapPosition } from "../components/MapPicker";
 import { Check, ChevronLeft, Close, Pin, Search, SurfaceIcon, Warn } from "../components/icons";
 import { SURFACE_COLOR, surfaceTextColor } from "../lib/format";
+import { AdminPilot } from "./AdminPilot";
 import type { AdminCourt, AdminOverview, AdminPark, AdminUser, CourtQr } from "../lib/types";
 
 const SURFACES = [
@@ -20,7 +21,7 @@ const SURFACES = [
   { value: "grass", label: "Grama" },
 ];
 
-type Tab = "quadras" | "pessoas";
+type Tab = "quadras" | "pessoas" | "piloto";
 
 export function Admin() {
   const navigate = useNavigate();
@@ -78,8 +79,8 @@ export function Admin() {
           <Stat value={data.totals.users} label="Pessoas" />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", padding: 4, background: "rgba(241,236,239,.1)", borderRadius: 10 }}>
-          {(["quadras", "pessoas"] as const).map((option) => (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", padding: 4, background: "rgba(241,236,239,.1)", borderRadius: 10 }}>
+          {(["quadras", "pessoas", "piloto"] as const).map((option) => (
             <button
               key={option}
               type="button"
@@ -109,9 +110,9 @@ export function Admin() {
         </p>
       )}
 
-      {tab === "quadras"
-        ? <Courts data={data} onChanged={load} onNotice={setNotice} />
-        : <People onNotice={setNotice} />}
+      {tab === "quadras" && <Courts data={data} onChanged={load} onNotice={setNotice} />}
+      {tab === "pessoas" && <People onNotice={setNotice} />}
+      {tab === "piloto" && <AdminPilot data={data} />}
     </div>
   );
 }
@@ -314,6 +315,12 @@ function CourtRow({
           && court.max_distance_meters !== 1000
           && ` · raio ${court.max_distance_meters} m`}
       </span>
+
+      {court.queue_mode === "host" && (
+        <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "rgba(196,144,81,.16)", border: "1px solid var(--ocre)", borderRadius: 6, fontSize: 11, fontWeight: 700, color: "var(--ink)" }}>
+          Modo anfitrião (piloto) · {court.host_session_open ? "fila aberta agora" : "sem fila aberta"}
+        </span>
+      )}
 
       {court.enforce_proximity === false && (
         <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "rgba(177,63,22,.12)", border: "1px solid var(--rust)", borderRadius: 6, fontSize: 11, fontWeight: 700, color: "var(--rust)" }}>
@@ -607,6 +614,7 @@ function CourtForm({
   const [active, setActive] = useState(court?.is_active ?? true);
   const [radius, setRadius] = useState(String(court?.max_distance_meters ?? 1000));
   const [checkDistance, setCheckDistance] = useState(court?.enforce_proximity ?? true);
+  const [mode, setMode] = useState<"fixed_qr" | "host">(court?.queue_mode ?? "fixed_qr");
   const [address, setAddress] = useState(court?.address ?? park.address ?? "");
   const [position, setPosition] = useState<MapPosition | null>(
     court ? { latitude: court.latitude, longitude: court.longitude } : null,
@@ -636,7 +644,8 @@ function CourtForm({
         hasNfcTag: nfc,
         isActive: active,
         maxDistanceMeters: Number(radius) || 1000,
-        enforceProximity: checkDistance,
+        enforceProximity: mode === "host" ? true : checkDistance,
+        queueMode: mode,
       });
       await onSaved();
     } catch (cause) {
@@ -720,9 +729,38 @@ function CourtForm({
         />
       </Group>
 
-      <Toggle label="Exigir estar perto da quadra" checked={checkDistance} onChange={setCheckDistance} />
+      <Group
+        label="Como se entra na fila"
+        hint={mode === "host"
+          ? "Piloto sem nada na placa: a primeira pessoa com o app abre a fila e os próximos entram pelo QR na tela dela. A distância fica sempre ligada."
+          : "Pelo QR impresso na placa ou pelo totem NFC."}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          {([["fixed_qr", "QR da placa"], ["host", "Anfitrião (piloto)"]] as const).map(([value, text]) => (
+            <button
+              key={value}
+              type="button"
+              className="press"
+              aria-pressed={mode === value}
+              onClick={() => setMode(value)}
+              style={{ minHeight: 44, borderRadius: 8, fontSize: 12, fontWeight: 700, background: mode === value ? "var(--green)" : "var(--chalk)", color: mode === value ? "var(--chalk)" : "var(--ink)", border: mode === value ? "2px solid var(--ink)" : "1.5px solid rgba(47,70,41,.25)" }}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+        {court?.queue_mode === "host" && mode === "fixed_qr" && court.host_session_open && (
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--rust)" }}>
+            Há uma fila aberta agora. Ao salvar, ela fecha, e os grupos sem app saem dela — quem tem o app continua.
+          </span>
+        )}
+      </Group>
 
-      {checkDistance
+      {mode === "fixed_qr" && (
+        <Toggle label="Exigir estar perto da quadra" checked={checkDistance} onChange={setCheckDistance} />
+      )}
+
+      {checkDistance || mode === "host"
         ? (
           <Field
             label="Raio de proximidade (metros)"

@@ -176,3 +176,53 @@ export async function verifyCourtQrPayload(
 
   return payload;
 }
+
+// ---------------------------------------------------------------------
+// O QR na tela de quem está na fila (Sprint 5)
+//
+// Não é assinado com QR_SIGNING_SECRET: o código é aleatório, emitido
+// pelo banco (issue_host_invite), troca a cada 30 s e vale 10 min. O
+// banco guarda só o hash. Fica sob /q/ para os App Links abrirem o app
+// instalado, como no QR da placa:
+//
+//   1. Esquema próprio   neqst:h1:<código>
+//   2. App Link https    https://app.neqst.com.br/q/h/<código>
+// ---------------------------------------------------------------------
+
+export const HOST_INVITE_PATH = "/q/h";
+const HOST_CODE_RE = /^[A-Za-z0-9_-]{24}$/;
+
+/** Devolve o código do convite, ou null se o payload for de outro tipo. */
+export function parseHostInvitePayload(raw: string): string | null {
+  const value = raw.trim();
+
+  if (/^https?:\/\//i.test(value)) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return null;
+    }
+    const match = url.pathname.match(/\/q\/h\/([^/]+)\/?$/);
+    if (!match) return null;
+    if (!HOST_CODE_RE.test(match[1])) {
+      throw new InvalidQrError("Código do convite inválido");
+    }
+    return match[1];
+  }
+
+  const parts = value.split(":");
+  if (parts.length === 3 && parts[0] === QR_PREFIX && parts[1] === "h1") {
+    if (!HOST_CODE_RE.test(parts[2])) {
+      throw new InvalidQrError("Código do convite inválido");
+    }
+    return parts[2];
+  }
+
+  return null;
+}
+
+/** URL do convite, a que o QR na tela desenha. */
+export function buildHostInviteUrl(code: string, baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}${HOST_INVITE_PATH}/${code}`;
+}
