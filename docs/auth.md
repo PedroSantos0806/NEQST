@@ -194,7 +194,9 @@ No mapa:
 - **Estou na quadra** usa o GPS do aparelho — é o caminho mais curto
   quando se está no local;
 - **Buscar endereço** procura o que foi digitado no campo acima e leva
-  o mapa para perto (serviço do OpenStreetMap, sem chave);
+  o mapa para perto. O texto do campo é enviado ao Nominatim do
+  OpenStreetMap — só nesse clique, nunca enquanto se digita (ver
+  [serviços de terceiros](web.md#serviços-de-terceiros-que-a-tela-de-cadastro-usa));
 - o **círculo verde** é o raio do check-in e o **ponto vermelho** é o
   parque; **Ver o raio inteiro** afasta a câmera até o círculo caber,
   para conferir se a área cobre a quadra sem pegar a rua;

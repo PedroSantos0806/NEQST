@@ -69,6 +69,24 @@ export function ErrorState({
   );
 }
 
+/**
+ * O campo de texto do app. Vivia dentro da tela de administração e foi
+ * recopiado à mão dentro do mapa — duas definições do mesmo controle,
+ * que já tinham começado a divergir na altura.
+ */
+export function fieldStyle(height = 44): CSSProperties {
+  return {
+    width: "100%",
+    height,
+    padding: height >= 44 ? "0 12px" : "0 10px",
+    background: height >= 44 ? "var(--chalk)" : "var(--bg)",
+    border: "1.5px solid rgba(47,70,41,.3)",
+    borderRadius: 8,
+    fontSize: height >= 44 ? 14 : 13,
+    color: "var(--ink)",
+  };
+}
+
 export type ButtonTone = "primary" | "dark" | "ghost" | "danger";
 
 export function buttonStyle(tone: ButtonTone = "primary", disabled = false): CSSProperties {

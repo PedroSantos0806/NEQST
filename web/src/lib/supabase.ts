@@ -113,8 +113,41 @@ const RPC_MESSAGES: Record<string, string> = {
   NQ029: "O parceiro entra escaneando a quadra e pedindo para entrar no seu grupo.",
 };
 
+/**
+ * As CHECK constraints do banco, traduzidas.
+ *
+ * O PostgREST devolve `23514` com a mensagem crua do Postgres — em
+ * inglês e citando o nome interno da constraint. Quem opera um parque
+ * não tem o que fazer com isso. O formulário valida antes de enviar
+ * (ver `lib/limits.ts`), e isto aqui é a rede: cobre o que escapar da
+ * tela, de outra tela, ou de uma faixa que mudou no banco e não na
+ * constante.
+ */
+const CHECK_MESSAGES: Array<[RegExp, string]> = [
+  [/courts_slot_minutes_range/, "O slot de jogo precisa ficar entre 20 e 90 minutos."],
+  [/courts_max_distance_meters_check/, "O raio de proximidade precisa ficar entre 10 e 20000 metros."],
+  [/courts_call_window_range/, "A tolerância para o check-in precisa ficar entre 1 e 30 minutos."],
+  [/courts_gps_tolerance_meters_check/, "A tolerância de GPS precisa ficar entre 0 e 2000 metros."],
+  [/(courts|parks)_latitude_check/, "A latitude precisa ficar entre -90 e 90."],
+  [/(courts|parks)_longitude_check/, "A longitude precisa ficar entre -180 e 180."],
+  [/courts_name_length/, "O nome da quadra precisa ter de 2 a 120 caracteres."],
+  [/(courts|parks)_address_length/, "O endereço precisa ter no máximo 200 caracteres."],
+  [/courts_average_match_minutes_check/, "A duração média precisa ficar entre 1 e 240 minutos."],
+];
+
 export function rpcError(error: { code?: string; message?: string } | null): ApiError {
   const code = error?.code ?? "DATABASE_ERROR";
+
+  if (code === "23514") {
+    const raw = error?.message ?? "";
+    const known = CHECK_MESSAGES.find(([pattern]) => pattern.test(raw));
+    return new ApiError(
+      code,
+      known
+        ? known[1]
+        : "Algum valor do formulário está fora do que o banco aceita. Confira os números e tente de novo.",
+    );
+  }
 
   /*
    * PGRST202 é o PostgREST dizendo que não achou a função com aqueles

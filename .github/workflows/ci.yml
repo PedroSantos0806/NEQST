@@ -47,6 +47,11 @@ jobs:
       - name: Type-check
         run: npm run typecheck --prefix web
 
+      # Validação dos campos, tradução dos erros do banco e o destino
+      # pós-login: o que a revisão apontou como sem cobertura nenhuma.
+      - name: Testes de unidade
+        run: npm test --prefix web
+
       # O mesmo comando que a Vercel roda: se quebrar aqui, quebra lá.
       - name: Build
         env:
