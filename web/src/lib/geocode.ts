@@ -33,7 +33,18 @@ export function isUsableCoordinate(latitude: number, longitude: number): boolean
   );
 }
 
-export async function searchAddress(query: string, timeoutMs = 10000): Promise<GeocodeHit[]> {
+/**
+ * `signal` deixa quem chamou desistir — o botão vira "Cancelar" e o
+ * operador volta a arrastar o mapa sem esperar o tempo acabar.
+ *
+ * 7 segundos porque é uma tela de cadastro, não um fluxo crítico: na
+ * rede ruim de um parque, esperar 10 segundos por um serviço opcional
+ * parece travamento. Quem desiste tem o mapa e o GPS ali do lado.
+ */
+export async function searchAddress(
+  query: string,
+  { signal, timeoutMs = 7000 }: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<GeocodeHit[]> {
   const text = query.trim();
   if (text.length < 4) {
     throw new Error("Escreva o endereço com um pouco mais de detalhe.");
@@ -50,16 +61,21 @@ export async function searchAddress(query: string, timeoutMs = 10000): Promise<G
 
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), timeoutMs);
+  const giveUp = () => abort.abort();
+  signal?.addEventListener("abort", giveUp);
 
   let response: Response;
   try {
     response = await fetch(url.toString(), { signal: abort.signal });
   } catch {
+    // Desistência do operador não é erro: quem cancelou já sabe.
+    if (signal?.aborted) throw new DOMException("Busca cancelada.", "AbortError");
     throw new Error(
       "Não conseguimos consultar a busca de endereços agora. Marque a posição direto no mapa.",
     );
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", giveUp);
   }
 
   if (!response.ok) {

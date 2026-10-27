@@ -218,6 +218,76 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- Endereço: dá para corrigir, inclusive para "nenhum"
+--
+-- O `coalesce(nullif(trim(...), ''), address)` antigo nunca limpava:
+-- quem apagava o campo e salvava via o texto velho voltar.
+-- ---------------------------------------------------------------------
+do $$
+declare v_park jsonb; v_pid uuid; v jsonb; v_cid uuid; v_code text;
+begin
+  v_park := public.admin_upsert_park(
+    null, 'Parque do Endereço', null, 'São Paulo', 'Rua Velha, 1', -23.6, -46.7
+  );
+  v_pid := (v_park ->> 'id')::uuid;
+
+  -- nulo não mexe
+  v := public.admin_upsert_park(v_pid, p_district => 'Centro');
+  assert v ->> 'address' = 'Rua Velha, 1', 'nulo mantém o endereço';
+
+  -- texto substitui
+  v := public.admin_upsert_park(v_pid, p_address => '  Rua Nova, 2  ');
+  assert v ->> 'address' = 'Rua Nova, 2', format('texto substitui e apara: %s', v ->> 'address');
+
+  -- vazio apaga
+  v := public.admin_upsert_park(v_pid, p_address => '');
+  assert v ->> 'address' is null, format('vazio deveria apagar, veio: %s', v ->> 'address');
+
+  -- a quadra herda o do parque quando nada é informado...
+  v := public.admin_upsert_park(v_pid, p_address => 'Portaria 1');
+  v := public.admin_upsert_court(null, v_pid, null, 'clay', 'Q herdeira');
+  v_cid := (v ->> 'id')::uuid;
+  assert v ->> 'address' = 'Portaria 1', 'quadra nova herda o endereço do parque';
+
+  -- ...e nasce sem nenhum quando o campo foi apagado de propósito
+  v := public.admin_upsert_court(null, v_pid, null, 'clay', 'Q sem endereço', '');
+  assert v ->> 'address' is null, 'campo apagado na criação nasce sem endereço';
+
+  -- apagar o da quadra também funciona
+  v := public.admin_upsert_court(v_cid, p_address => '');
+  assert v ->> 'address' is null, 'dá para apagar o endereço da quadra';
+
+  -- endereço grande demais é recusado pelo banco (a tela corta em 200)
+  begin
+    perform public.admin_upsert_court(v_cid, p_address => repeat('A', 201));
+    assert false, 'endereço de 201 caracteres deveria ser recusado';
+  exception when check_violation then null;
+  end;
+
+  -- alfinete é par: meia coordenada não entra
+  begin
+    perform public.admin_upsert_court(v_cid, p_latitude => -23.9);
+    assert false, 'latitude sem longitude deveria ser recusada';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ024', format('esperava NQ024, obtive %s', v_code);
+  end;
+
+  begin
+    perform public.admin_upsert_park(v_pid, p_longitude => -46.1);
+    assert false, 'longitude sem latitude deveria ser recusada';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ024', format('esperava NQ024, obtive %s', v_code);
+  end;
+
+  -- e o par completo continua entrando
+  v := public.admin_upsert_court(v_cid, p_latitude => -23.95, p_longitude => -46.75);
+  assert (v ->> 'latitude')::double precision = -23.95, 'o par completo move o alfinete';
+  assert (v ->> 'longitude')::double precision = -46.75, 'nos dois eixos';
+end $$;
+
+-- ---------------------------------------------------------------------
 -- Uma assinatura de cada: duas versões conviventes travam tudo
 --
 -- Com todos os parâmetros opcionais, duas versões da mesma função

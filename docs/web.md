@@ -46,6 +46,54 @@ erro pinta uma mensagem legível se algo quebrar depois disso.
 Mudou variável? A Vercel só aplica no **próximo build** — é preciso um
 Redeploy, não só salvar.
 
+## Serviços de terceiros que a tela de cadastro usa
+
+Duas coisas no cadastro de quadras saem do app para fora do Supabase.
+Estão aqui porque ninguém deveria descobrir isso lendo o código.
+
+| Serviço | Quando | O que sai daqui |
+|---|---|---|
+| Azulejos do mapa (`VITE_MAP_TILE_URL`, padrão OpenStreetMap) | sempre que o mapa do cadastro abre | as coordenadas da área visível, como em qualquer mapa |
+| Nominatim (`nominatim.openstreetmap.org`) | **só** quando o administrador aperta "Buscar endereço" | o texto digitado no campo de endereço |
+
+A busca nunca dispara enquanto se digita — é um clique, uma consulta.
+Isso é exigência da política de uso do Nominatim (no máximo uma por
+segundo) e também mantém o que sai daqui previsível. Nenhum dos dois
+recebe dado de jogador: a tela é de administração.
+
+Quem não quiser depender deles: `VITE_MAP_TILE_URL` aponta para outro
+provedor, e o cadastro funciona inteiro sem a busca — "Estou na
+quadra" usa o GPS do aparelho e "Digitar as coordenadas" não consulta
+nada.
+
+> **A atribuição é interpretada como HTML.** O Leaflet escreve
+> `VITE_MAP_TILE_ATTRIBUTION` com `innerHTML`, porque os provedores
+> publicam o crédito como um link pronto. Só quem controla o build
+> define essa variável, mas trate-a como código: nada de colar ali
+> texto vindo de terceiros sem ler.
+
+## Cabeçalhos de segurança
+
+O `vercel.json` manda uma `Content-Security-Policy` junto de toda
+resposta. O que ela decide, em uma linha cada:
+
+- `script-src 'self'` — só o bundle do próprio deploy executa. É o que
+  fecha a porta do XSS, e é o motivo de o app não ter script inline.
+- `style-src 'self' 'unsafe-inline' …googleapis` — o app todo é estilo
+  inline (atributo `style`), e as fontes da marca vêm do Google Fonts.
+- `img-src 'self' data: blob: https:` — azulejos de mapa e fotos de
+  quadra vêm de fora, e o provedor de azulejos é configurável; o que
+  esta linha garante é que imagem nenhuma vire script.
+- `connect-src` — Supabase (REST, auth, realtime, storage) e o
+  Nominatim. **Trocar o provedor de azulejos por um que faça chamadas
+  (e não só sirva imagens) exige acrescentar o domínio aqui.**
+- `frame-ancestors 'none'` — ninguém embute o app num iframe.
+
+Verificado contra o bundle de produção em Chromium: a tela de
+administração abre, o mapa monta e os azulejos carregam, sem nenhuma
+violação no console. Vale testar assim de novo a cada mudança — CSP
+errada não derruba o build, derrube a tela do usuário.
+
 ## Do lado do Supabase
 
 Três coisas precisam apontar para o domínio da Vercel:
