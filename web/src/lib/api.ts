@@ -12,15 +12,18 @@ import type {
   AppRole,
   CourtQr,
   CourtScreen,
+  HostInvite,
   MatchState,
   MyQueueState,
   PaletteColor,
   ParkCard,
   ParkScreen,
+  PilotStats,
   PinResult,
   ProfileSummary,
   ScanResult,
 } from "./types";
+import { getPosition } from "./geo";
 
 async function rpc<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   const { data, error } = await supabase.rpc(name, args);
@@ -83,15 +86,65 @@ export const updateProfile = (patch: {
  * da assinatura — por isso não dá para fazer isso no cliente.
  */
 export function scanCourt(input: {
-  payload: string;
+  payload?: string;
+  courtId?: string;
   latitude: number;
   longitude: number;
   accuracy?: number | null;
-  method?: "qr" | "nfc";
-  purpose?: "join" | "start";
+  method?: "qr" | "nfc" | "gps";
+  purpose?: "join" | "start" | "open";
 }) {
   return callFunction<ScanResult>("scan-court", { body: input });
 }
+
+/**
+ * Só a localização, sem QR: nas quadras em modo anfitrião, para abrir a
+ * fila e para o botão "Entrando na quadra". O banco não aceita este
+ * token para entrar na fila de ninguém — para isso é o QR de quem já
+ * está nela.
+ */
+export async function confirmAtCourt(courtId: string, purpose: "start" | "open") {
+  const position = await getPosition();
+  return scanCourt({
+    courtId,
+    latitude: position.latitude,
+    longitude: position.longitude,
+    accuracy: position.accuracy,
+    method: "gps",
+    purpose,
+  });
+}
+
+// ---------------------------------------------------------------------
+// Fila com anfitrião (Sprint 5)
+// ---------------------------------------------------------------------
+
+/**
+ * Abre a fila de uma quadra sem QR na placa. Quem já está jogando vira
+ * um turno sem app que acaba em `playingMinutes`; cada rótulo de
+ * `waitingLabels` é um grupo sem app na frente de quem abriu.
+ */
+export const openHostQueue = (scanToken: string, playingMinutes: number | null, waitingLabels: string[]) =>
+  rpc<CourtScreen>("open_host_queue", {
+    p_scan_token: scanToken,
+    p_playing_minutes: playingMinutes,
+    p_waiting_labels: waitingLabels,
+  });
+
+/** Quem chegou sem app depois da abertura: vai para o fim da fila. */
+export const hostAddOffline = (courtId: string, label: string) =>
+  rpc<CourtScreen>("host_add_offline", { p_court_id: courtId, p_label: label || null });
+
+export const hostMarkOffline = (entryId: string, action: "arrived" | "gave_up" | "finished") =>
+  rpc<CourtScreen>("host_mark_offline", { p_entry_id: entryId, p_action: action });
+
+/** Um código novo para o QR na tela; troca a cada 30 s, vale 10 min. */
+export const issueHostInvite = (courtId: string, displayId: string) =>
+  rpc<HostInvite>("issue_host_invite", { p_court_id: courtId, p_display_id: displayId });
+
+/** Conta que o convite foi aberto, antes do login. Falhar aqui não atrapalha ninguém. */
+export const hostInviteOpened = (code: string, visitor: string) =>
+  rpc<void>("host_invite_opened", { p_code: code, p_visitor: visitor });
 
 /** Abre uma vaga na fila — sozinho; os amigos entram nela depois. */
 export const joinQueue = (scanToken: string) =>
@@ -152,6 +205,14 @@ export const vapidPublicKey = () =>
 
 export const adminOverview = () => rpc<AdminOverview>("admin_overview");
 
+/** Os números do piloto, sem nomes. Datas em AAAA-MM-DD, dias de São Paulo. */
+export const adminPilotStats = (filter: { parkId?: string | null; from?: string | null; to?: string | null }) =>
+  rpc<PilotStats>("admin_pilot_stats", {
+    p_park_id: filter.parkId ?? null,
+    p_from: filter.from ?? null,
+    p_to: filter.to ?? null,
+  });
+
 export const adminUsers = (query = "") =>
   rpc<AdminUser[]>("admin_users", { p_query: query || null, p_limit: 100 });
 
@@ -203,6 +264,7 @@ export const adminUpsertCourt = (court: {
   gpsToleranceMeters?: number;
   enforceProximity?: boolean;
   callWindowSeconds?: number;
+  queueMode?: "fixed_qr" | "host";
 }) =>
   rpc("admin_upsert_court", {
     p_id: court.id ?? null,
@@ -221,6 +283,7 @@ export const adminUpsertCourt = (court: {
     p_gps_tolerance_meters: court.gpsToleranceMeters ?? null,
     p_enforce_proximity: court.enforceProximity ?? null,
     p_call_window_seconds: court.callWindowSeconds ?? null,
+    p_queue_mode: court.queueMode ?? null,
   });
 
 /**

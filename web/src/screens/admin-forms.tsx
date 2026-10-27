@@ -188,6 +188,7 @@ export function CourtForm({
   const [active, setActive] = useState(court?.is_active ?? true);
   const [radius, setRadius] = useState(String(court?.max_distance_meters ?? 1000));
   const [checkDistance, setCheckDistance] = useState(court?.enforce_proximity ?? true);
+  const [mode, setMode] = useState<"fixed_qr" | "host">(court?.queue_mode ?? "fixed_qr");
   const [address, setAddress] = useState(court?.address ?? park.address ?? "");
   const [position, setPosition] = useState<MapPosition | null>(
     court ? { latitude: court.latitude, longitude: court.longitude } : null,
@@ -214,8 +215,10 @@ export function CourtForm({
     const parsedTolerance = readNumber(tolerance, LIMITS.callWindowMinutes);
     if (!parsedTolerance.ok) { setError(parsedTolerance.message); return; }
 
+    // No modo anfitrião a distância é sempre exigida, então o raio
+    // precisa ser válido mesmo com o interruptor desligado.
     let parsedRadius = { ok: true, value: 1000 } as const as { ok: true; value: number };
-    if (checkDistance) {
+    if (checkDistance || mode === "host") {
       const read = readNumber(radius, LIMITS.maxDistanceMeters);
       if (!read.ok) { setError(read.message); return; }
       parsedRadius = read;
@@ -237,7 +240,8 @@ export function CourtForm({
         hasNfcTag: nfc,
         isActive: active,
         maxDistanceMeters: parsedRadius.value,
-        enforceProximity: checkDistance,
+        enforceProximity: mode === "host" ? true : checkDistance,
+        queueMode: mode,
       });
       await onSaved();
     } catch (cause) {
@@ -326,9 +330,38 @@ export function CourtForm({
         />
       </Group>
 
-      <Toggle label="Exigir estar perto da quadra" checked={checkDistance} onChange={setCheckDistance} />
+      <Group
+        label="Como se entra na fila"
+        hint={mode === "host"
+          ? "Piloto sem nada na placa: a primeira pessoa com o app abre a fila e os próximos entram pelo QR na tela dela. A distância fica sempre ligada."
+          : "Pelo QR impresso na placa ou pelo totem NFC."}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          {([["fixed_qr", "QR da placa"], ["host", "Anfitrião (piloto)"]] as const).map(([value, text]) => (
+            <button
+              key={value}
+              type="button"
+              className="press"
+              aria-pressed={mode === value}
+              onClick={() => setMode(value)}
+              style={{ minHeight: 44, borderRadius: 8, fontSize: 12, fontWeight: 700, background: mode === value ? "var(--green)" : "var(--chalk)", color: mode === value ? "var(--chalk)" : "var(--ink)", border: mode === value ? "2px solid var(--ink)" : "1.5px solid rgba(47,70,41,.25)" }}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+        {court?.queue_mode === "host" && mode === "fixed_qr" && court.host_session_open && (
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--rust)" }}>
+            Há uma fila aberta agora. Ao salvar, ela fecha, e os grupos sem app saem dela — quem tem o app continua.
+          </span>
+        )}
+      </Group>
 
-      {checkDistance
+      {mode === "fixed_qr" && (
+        <Toggle label="Exigir estar perto da quadra" checked={checkDistance} onChange={setCheckDistance} />
+      )}
+
+      {checkDistance || mode === "host"
         ? (
           <Field
             label="Raio de proximidade (metros)"

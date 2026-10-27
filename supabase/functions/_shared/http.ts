@@ -122,7 +122,7 @@ export function requireEnv(name: string): string {
 }
 
 /**
- * Traduz o SQLSTATE das RPCs (NQ001..NQ029) para erro de API.
+ * Traduz o SQLSTATE das RPCs (NQ001..NQ035) para erro de API.
  * Ver supabase/migrations/20260923120600_queue_functions.sql.
  */
 const PG_ERROR_MAP: Record<string, { code: string; status: number }> = {
@@ -149,6 +149,12 @@ const PG_ERROR_MAP: Record<string, { code: string; status: number }> = {
   NQ027: { code: "JOIN_REQUEST_NOT_PENDING", status: 409 },
   NQ028: { code: "PIN_ATTEMPTS_EXCEEDED", status: 429 },
   NQ029: { code: "PARTNER_MUST_SCAN", status: 400 },
+  NQ030: { code: "NOT_HOST_MODE", status: 409 },
+  NQ031: { code: "HOST_QUEUE_ALREADY_OPEN", status: 409 },
+  NQ032: { code: "HOST_QUEUE_INVALID", status: 400 },
+  NQ033: { code: "NOT_THE_HOST", status: 403 },
+  NQ034: { code: "HOST_QUEUE_CLOSED", status: 409 },
+  NQ035: { code: "HOST_MODE_NEEDS_PROXIMITY", status: 400 },
 };
 
 export function postgrestError(

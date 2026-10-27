@@ -41,6 +41,8 @@ as $$
     'longitude',     c.longitude,
     'slot_minutes',  c.slot_minutes,
     'call_window_seconds', c.call_window_seconds,
+    'queue_mode',    c.queue_mode,
+    'host_session_open', public.current_host_session(c.id) is not null,
     'is_active',     c.is_active,
     'status',        c.status,
     'has_qr_code',   c.has_qr_code,
@@ -58,7 +60,9 @@ $$;
 
 comment on function public.admin_court_json(public.courts) is
   'Forma de uma quadra na tela de administração. Campo novo no painel '
-  'entra AQUI, não numa cópia de admin_overview.';
+  'entra AQUI, não numa cópia de admin_overview — foi recopiando esta '
+  'estrutura em seis migrations que o endereço se perdeu uma vez e o '
+  'modo anfitrião quase se perdeu outra.';
 
 -- ---------------------------------------------------------------------
 -- A forma de um parque, com as quadras dentro

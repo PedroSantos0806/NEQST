@@ -36,6 +36,14 @@ assinada, então a validação é idêntica. `purpose` é `"join"` (padrão) ou
 `"start"`: o token serve para os dois, e quem decide é a chamada
 seguinte (`/join-queue` ou `/check-in`).
 
+**Sprint 5.** O `payload` também pode ser o convite na tela de alguém da
+fila (`https://.../q/h/<código>`): a resposta traz `method:
+"host_invite"`, e o convite vencido ou de fila encerrada volta
+`HOST_INVITE_EXPIRED` (410) ou `HOST_QUEUE_CLOSED` (409). Nas quadras em
+modo anfitrião há ainda `method: "gps"`, sem `payload` e com `courtId`:
+serve para `open_host_queue` e para o check-in, nunca para entrar na
+fila de alguém ([sprint5.md](sprint5.md)).
+
 `accuracy` é o erro em metros reportado pelo GPS
 (`Location.getCurrentPositionAsync` → `coords.accuracy`). Quando presente,
 amplia o raio aceito até o teto de tolerância da quadra (padrão +200 m).
@@ -508,6 +516,35 @@ tabela sem acesso direto do cliente; só sai em `court_screen.my_group` e
 Pedido pendente expira em 10 minutos, quando o grupo sai da fila ou
 quando a pessoa entra em outra vaga.
 
+### RPCs da Sprint 5 — fila com anfitrião
+
+```ts
+// Abrir a fila (token de scan-court com method "gps"): faltam 15 min
+// para quem joga, e dois grupos sem app esperam na frente.
+await supabase.rpc("open_host_queue", {
+  p_scan_token: token, p_playing_minutes: 15, p_waiting_labels: ["dupla de boné azul", ""],
+});
+
+// Quem organiza: grupo sem app no fim da fila, e a vez dele.
+await supabase.rpc("host_add_offline", { p_court_id: courtId, p_label: "trio da raquete vermelha" });
+await supabase.rpc("host_mark_offline", { p_entry_id: entryId, p_action: "arrived" }); // gave_up | finished
+
+// Qualquer pessoa da fila: um código para o QR na tela. Trocar a cada
+// rotate_seconds (30), com o mesmo p_display_id enquanto o QR estiver aberto.
+const { data } = await supabase.rpc("issue_host_invite", { p_court_id: courtId, p_display_id: crypto.randomUUID() });
+// { code, invite_id, expires_at, rotate_seconds: 30, valid_seconds: 600 }
+
+// Aberto antes do login (anon). Só conta para o painel.
+await supabase.rpc("host_invite_opened", { p_code: code, p_visitor: visitorId });
+
+// O painel do piloto (admin). Contagens, sem nomes.
+await supabase.rpc("admin_pilot_stats", { p_park_id: null, p_from: "2026-10-01", p_to: "2026-10-30" });
+```
+
+`court_screen` ganhou `court.queue_mode`, `host` (`is_me`,
+`can_show_invite`, `host_name`) e `can_open_host`; os itens da fila e o
+turno, `is_offline` e `offline_label`.
+
 ### Tempo real (US-03)
 
 ```ts
@@ -577,3 +614,9 @@ tabela acima.
 | `NQ027` | Pedido de entrada não está mais pendente |
 | `NQ028` | Muitas tentativas de PIN (5 em 15 min) |
 | `NQ029` | Parceiro pelo @ — ele entra escaneando a quadra |
+| `NQ030` | A quadra não está no modo anfitrião |
+| `NQ031` | Já existe uma fila aberta nesta quadra |
+| `NQ032` | Dados da fila com anfitrião inválidos |
+| `NQ033` | Só quem organiza a fila faz isso |
+| `NQ034` | A fila desta quadra não está aberta |
+| `NQ035` | No modo anfitrião a distância não pode ser desligada |

@@ -138,7 +138,7 @@ As funções hoje são:
 
 | Função | Para quê |
 |---|---|
-| `scan-court` | valida o QR/NFC e a distância, emite o token de 30s |
+| `scan-court` | valida o QR/NFC (ou o convite na tela, ou só o GPS no modo anfitrião) e a distância, emite o token de 30s |
 | `join-queue` · `leave-queue` | entrar e sair da fila |
 | `check-in` | libera o placar e começa a partida |
 | `match` | quem ganhou |
@@ -191,6 +191,9 @@ select cron.schedule('neqst-maintenance', '*/15 * * * *',
 select cron.schedule('neqst-advance-queues', '* * * * *',
                      $$ select public.advance_expired_queues(); $$);
 ```
+
+Sprint 5: a mesma `advance_expired_queues()` fecha a fila com anfitrião
+esquecida (30 min sem ninguém com o app e sem turno). Nada a agendar.
 
 Conferir: `select * from cron.job;` e `select * from cron.job_run_details order by start_time desc limit 20;`
 

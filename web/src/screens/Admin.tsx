@@ -10,10 +10,11 @@ import {
 import { ErrorState, Loading, buttonStyle } from "../components/ui";
 import { ChevronLeft, Close, Pin, Search, SurfaceIcon, Warn } from "../components/icons";
 import { SURFACE_COLOR, surfaceTextColor } from "../lib/format";
+import { AdminPilot } from "./AdminPilot";
 import { CourtForm, ParkForm, field } from "./admin-forms";
 import type { AdminCourt, AdminOverview, AdminPark, AdminUser, CourtQr } from "../lib/types";
 
-type Tab = "quadras" | "pessoas";
+type Tab = "quadras" | "pessoas" | "piloto";
 
 export function Admin() {
   const navigate = useNavigate();
@@ -71,8 +72,8 @@ export function Admin() {
           <Stat value={data.totals.users} label="Pessoas" />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", padding: 4, background: "rgba(241,236,239,.1)", borderRadius: 10 }}>
-          {(["quadras", "pessoas"] as const).map((option) => (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", padding: 4, background: "rgba(241,236,239,.1)", borderRadius: 10 }}>
+          {(["quadras", "pessoas", "piloto"] as const).map((option) => (
             <button
               key={option}
               type="button"
@@ -102,9 +103,9 @@ export function Admin() {
         </p>
       )}
 
-      {tab === "quadras"
-        ? <Courts data={data} onChanged={load} onNotice={setNotice} />
-        : <People onNotice={setNotice} />}
+      {tab === "quadras" && <Courts data={data} onChanged={load} onNotice={setNotice} />}
+      {tab === "pessoas" && <People onNotice={setNotice} />}
+      {tab === "piloto" && <AdminPilot data={data} />}
     </div>
   );
 }
@@ -331,6 +332,12 @@ function CourtRow({
           && court.max_distance_meters !== 1000
           && ` · raio ${court.max_distance_meters} m`}
       </span>
+
+      {court.queue_mode === "host" && (
+        <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "rgba(196,144,81,.16)", border: "1px solid var(--ocre)", borderRadius: 6, fontSize: 11, fontWeight: 700, color: "var(--ink)" }}>
+          Modo anfitrião (piloto) · {court.host_session_open ? "fila aberta agora" : "sem fila aberta"}
+        </span>
+      )}
 
       {court.enforce_proximity === false && (
         <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "rgba(177,63,22,.12)", border: "1px solid var(--rust)", borderRadius: 6, fontSize: 11, fontWeight: 700, color: "var(--rust)" }}>

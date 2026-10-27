@@ -12,6 +12,7 @@ const raw = {
   vapidPublicKey: import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined,
   mapTileUrl: import.meta.env.VITE_MAP_TILE_URL as string | undefined,
   mapTileAttribution: import.meta.env.VITE_MAP_TILE_ATTRIBUTION as string | undefined,
+  playStoreUrl: import.meta.env.VITE_PLAY_STORE_URL as string | undefined,
 };
 
 /**
@@ -47,6 +48,10 @@ export const env = {
   },
   get mapTileAttribution() {
     return raw.mapTileAttribution || OSM_ATTRIBUTION;
+  },
+  /** Link do app na Play Store. Sem ele, o convite oferece só instalar o site. */
+  get playStoreUrl() {
+    return raw.playStoreUrl || null;
   },
 };
 

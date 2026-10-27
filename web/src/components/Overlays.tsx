@@ -143,6 +143,7 @@ export function CallOverlay({
   parkName,
   secondsLeft,
   groupLabel,
+  locationCheckIn = false,
   onCheckIn,
   onLater,
 }: {
@@ -150,6 +151,8 @@ export function CallOverlay({
   parkName: string;
   secondsLeft: number;
   groupLabel: string;
+  /** Quadra sem QR na placa: o check-in é o botão com a localização. */
+  locationCheckIn?: boolean;
   onCheckIn: () => void;
   onLater: () => void;
 }) {
@@ -187,7 +190,8 @@ export function CallOverlay({
         <span className="bb" style={{ fontSize: 64, lineHeight: 0.86 }}>{courtName} liberada</span>
         <span style={{ fontSize: 15, lineHeight: 1.45 }}>
           O turno anterior acabou e o seu grupo é o 1º da fila. Basta um de vocês fazer o
-          check-in por QR ou NFC para o turno começar — quem chegar depois entra com o PIN.
+          check-in {locationCheckIn ? "já na quadra" : "por QR ou NFC"} para o turno começar —
+          quem chegar depois entra com o PIN.
         </span>
       </div>
 
@@ -236,7 +240,7 @@ export function CallOverlay({
         }}
       >
         <ScanFrame size={22} />
-        Fazer check-in e iniciar jogo
+        {locationCheckIn ? "Entrando na quadra" : "Fazer check-in e iniciar jogo"}
       </button>
       <button
         type="button"

@@ -22,7 +22,10 @@ export function ScanOverlay({
   onRead: (result: ScanResult, method: "qr" | "nfc") => void;
   onClose: () => void;
 }) {
-  const methods = court.court.checkin_methods;
+  // No modo anfitrião não há placa: a câmera lê o QR na tela de alguém
+  // da fila, e o formato do código diz à scan-court qual é.
+  const methods = court.court.checkin_methods.filter((m): m is "qr" | "nfc" => m !== "gps");
+  if (methods.length === 0) methods.push("qr");
   const [method, setMethod] = useState<"qr" | "nfc">(methods[0] ?? "qr");
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);

@@ -77,8 +77,9 @@ export function App() {
     <Routes>
       <Route path="/entrar" element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
-      {/* O QR impresso aponta para cá */}
+      {/* O QR impresso aponta para cá; o da tela de quem está na fila, para /q/h */}
       <Route path="/q/:courtId" element={<ScanLanding />} />
+      <Route path="/q/h/:code" element={<ScanLanding />} />
 
       <Route path="/" element={<Protected><Parks /></Protected>} />
       <Route path="/parque/:parkId" element={<Protected><Park /></Protected>} />

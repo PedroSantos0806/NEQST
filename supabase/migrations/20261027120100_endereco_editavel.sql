@@ -16,6 +16,13 @@
 --   . Passar só a latitude misturava com a longitude do parque, e o
 --     resultado era um ponto que não é nem um nem outro. Alfinete é
 --     par: ou vêm os dois, ou não vem nenhum.
+--
+-- NOTA DO MERGE: esta migration roda DEPOIS da do modo anfitrião, então
+-- ela parte da versão de lá (17 parâmetros, com `p_queue_mode` e o
+-- fechamento da fila quando a quadra sai do modo anfitrião) e enxerta as
+-- correções acima. Recriar a versão de 16 parâmetros aqui teria deixado
+-- duas assinaturas vivas — e apagado o modo anfitrião do cadastro. Foi
+-- exatamente assim que o endereço se perdeu no merge anterior.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
@@ -142,7 +149,8 @@ create or replace function public.admin_upsert_court(
   p_max_distance_meters  integer default null,
   p_gps_tolerance_meters integer default null,
   p_enforce_proximity    boolean default null,
-  p_call_window_seconds  integer default null
+  p_call_window_seconds  integer default null,
+  p_queue_mode           text    default null
 )
 returns jsonb
 language plpgsql
@@ -150,15 +158,35 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_row    public.courts;
-  v_park   public.parks;
-  v_number smallint;
-  v_name   text;
+  v_row     public.courts;
+  v_before  public.courts;
+  v_park    public.parks;
+  v_number  smallint;
+  v_name    text;
+  v_session uuid;
 begin
   perform public.require_admin();
 
+  -- Alfinete é par: meia coordenada se misturava com a do parque e
+  -- produzia um ponto que não é nem um nem outro.
   if (p_latitude is null) <> (p_longitude is null) then
     raise exception 'Informe latitude e longitude juntas.' using errcode = 'NQ024';
+  end if;
+
+  if p_queue_mode is not null and p_queue_mode not in ('fixed_qr', 'host') then
+    raise exception 'Modo de fila desconhecido: %', p_queue_mode using errcode = 'NQ032';
+  end if;
+
+  if p_id is not null then
+    select * into v_before from public.courts where id = p_id;
+  end if;
+
+  -- O banco recusaria pela constraint; aqui a mensagem diz o porquê.
+  if coalesce(p_queue_mode, v_before.queue_mode, 'fixed_qr') = 'host'
+     and not coalesce(p_enforce_proximity, v_before.enforce_proximity, true) then
+    raise exception 'No modo anfitrião, a conferência de distância não pode ser desligada: '
+                    'sem ela, o print do QR funcionaria de casa.'
+      using errcode = 'NQ035';
   end if;
 
   if p_id is null then
@@ -176,7 +204,8 @@ begin
     insert into public.courts (
       park_id, court_number, surface, slug, name,
       address, latitude, longitude, city, slot_minutes, has_qr_code, has_nfc_tag,
-      max_distance_meters, gps_tolerance_meters, enforce_proximity, call_window_seconds
+      max_distance_meters, gps_tolerance_meters, enforce_proximity, call_window_seconds,
+      queue_mode
     )
     values (
       v_park.id, v_number,
@@ -195,7 +224,8 @@ begin
       coalesce(p_max_distance_meters, 1000),
       coalesce(p_gps_tolerance_meters, 200),
       coalesce(p_enforce_proximity, true),
-      coalesce(p_call_window_seconds, 120)
+      coalesce(p_call_window_seconds, 120),
+      coalesce(p_queue_mode, 'fixed_qr')
     )
     returning * into v_row;
   else
@@ -213,12 +243,24 @@ begin
       max_distance_meters  = coalesce(p_max_distance_meters, max_distance_meters),
       gps_tolerance_meters = coalesce(p_gps_tolerance_meters, gps_tolerance_meters),
       enforce_proximity    = coalesce(p_enforce_proximity, enforce_proximity),
-      call_window_seconds  = coalesce(p_call_window_seconds, call_window_seconds)
+      call_window_seconds  = coalesce(p_call_window_seconds, call_window_seconds),
+      queue_mode           = coalesce(p_queue_mode, queue_mode)
     where id = p_id
     returning * into v_row;
 
     if v_row.id is null then
       raise exception 'Quadra não encontrada.' using errcode = 'NQ025';
+    end if;
+
+    -- Saiu do modo anfitrião (a placa chegou): a fila aberta fecha, e as
+    -- vagas sem app que esperavam saem com ela — sem anfitrião, ninguém
+    -- teria como andar com elas.
+    if v_before.queue_mode = 'host' and v_row.queue_mode <> 'host' then
+      for v_session in
+        select s.id from public.host_sessions s where s.court_id = v_row.id and s.closed_at is null
+      loop
+        perform public.close_host_session(v_session, 'mode_changed');
+      end loop;
     end if;
   end if;
 
@@ -228,3 +270,21 @@ $$;
 
 revoke all on function public.merge_address(text, text) from public;
 grant execute on function public.merge_address(text, text) to authenticated;
+
+revoke all on function public.admin_upsert_court(
+  uuid, uuid, smallint, text, text, text, double precision, double precision,
+  smallint, boolean, boolean, boolean, integer, integer, boolean, integer, text
+) from public;
+
+grant execute on function public.admin_upsert_court(
+  uuid, uuid, smallint, text, text, text, double precision, double precision,
+  smallint, boolean, boolean, boolean, integer, integer, boolean, integer, text
+) to authenticated;
+
+revoke all on function public.admin_upsert_park(
+  uuid, text, text, text, text, double precision, double precision, text, text, boolean
+) from public;
+
+grant execute on function public.admin_upsert_park(
+  uuid, text, text, text, text, double precision, double precision, text, text, boolean
+) to authenticated;

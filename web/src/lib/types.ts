@@ -50,6 +50,9 @@ export interface MatchState {
   is_live: boolean;
   elapsed_seconds: number;
   remaining_seconds: number;
+  /** Turno de um grupo sem app — quem já jogava quando a fila abriu, ou um registrado pelo anfitrião. */
+  is_offline?: boolean;
+  offline_label?: string | null;
 }
 
 export interface Racket {
@@ -74,6 +77,9 @@ export interface QueueItem {
   stack: Racket[];
   stack_more: number;
   eta_seconds: number;
+  /** Vaga de quem está na fila sem o app; só quem organiza a fila mexe nela. */
+  is_offline?: boolean;
+  offline_label?: string | null;
 }
 
 export interface CourtScreen {
@@ -87,7 +93,9 @@ export interface CourtScreen {
     is_active: boolean;
     slot_minutes: number;
     call_window_seconds: number;
-    checkin_methods: Array<"qr" | "nfc">;
+    /** "host": piloto sem nada na placa (Sprint 5). */
+    queue_mode?: QueueMode;
+    checkin_methods: Array<"qr" | "nfc" | "gps">;
     latitude: number;
     longitude: number;
     rating_avg: number | null;
@@ -107,9 +115,33 @@ export interface CourtScreen {
   my_entry: QueueItem | null;
   my_group: MyGroup | null;
   my_request: MyJoinRequest | null;
+  /** A fila com anfitrião aberta nesta quadra, se houver. */
+  host?: HostInfo | null;
+  /** Quadra em modo anfitrião, sem fila aberta, e quem olha está livre. */
+  can_open_host?: boolean;
   court_accepting: boolean;
   can_join: boolean;
   my_state: MyState;
+}
+
+export type QueueMode = "fixed_qr" | "host";
+
+export interface HostInfo {
+  session_id: string;
+  opened_at: string;
+  host_name: string | null;
+  /** Quem olha é quem organiza a fila agora. */
+  is_me: boolean;
+  /** Quem olha está na fila desta quadra e pode mostrar o QR. */
+  can_show_invite: boolean;
+}
+
+export interface HostInvite {
+  code: string;
+  invite_id: string;
+  expires_at: string;
+  rotate_seconds: number;
+  valid_seconds: number;
 }
 
 export interface ParkScreen {
@@ -213,8 +245,8 @@ export interface ScanResult {
   expiresAt: string;
   ttlSeconds: number;
   distanceMeters: number;
-  method: "qr" | "nfc";
-  purpose: "join" | "start";
+  method: "qr" | "nfc" | "gps" | "host_invite";
+  purpose: "join" | "start" | "open";
   court: {
     id: string;
     parkId: string;
@@ -224,7 +256,8 @@ export interface ScanResult {
     surface: CourtSurface;
     status: string;
     slotMinutes: number;
-    checkinMethods: Array<"qr" | "nfc">;
+    queueMode?: QueueMode;
+    checkinMethods: Array<"qr" | "nfc" | "gps">;
   };
 }
 
@@ -260,6 +293,8 @@ export interface AdminCourt {
   gps_tolerance_meters: number;
   enforce_proximity: boolean;
   qr_secret_version: number;
+  queue_mode?: QueueMode;
+  host_session_open?: boolean;
   queue_length: number;
 }
 
@@ -301,4 +336,33 @@ export interface CourtQr {
   version: number;
   printUrl: string;
   payload: string;
+}
+
+/** admin_pilot_stats: contagens do piloto, sem nomes. */
+export interface PilotStats {
+  period: { from: string; to: string };
+  totals: {
+    people: number;
+    app_entries: number;
+    offline_entries: number;
+    sessions: number;
+    turns: number;
+    hours_played: number;
+  };
+  daily: Array<{ day: string; people: number; app_entries: number; offline_entries: number }>;
+  origins: Partial<Record<"qr" | "nfc" | "host_invite" | "host_open" | "unknown", number>>;
+  funnel: {
+    shown: number;
+    opened: number;
+    scanned: number;
+    too_far: number;
+    new_accounts: number;
+    joined: number;
+  };
+  wait: { samples: number; median_min: number | null; p90_min: number | null };
+  by_hour: Array<{ hour: number; turns: number }>;
+  calls: { called: number; missed: number };
+  offline_hold: { samples: number; avg_min: number | null; max_min: number | null };
+  spreaders: { people: number; top: number[] };
+  courts: Array<{ court_id: string; label: string; people: number; app_entries: number; offline_entries: number }>;
 }

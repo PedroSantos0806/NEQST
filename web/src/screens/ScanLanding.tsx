@@ -1,34 +1,54 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { scanCourt } from "../lib/api";
+import { hostInviteOpened, scanCourt } from "../lib/api";
 import { getPosition, LocationError } from "../lib/geo";
 import { ErrorState, Loading, buttonStyle } from "../components/ui";
+import { QrIcon } from "../components/icons";
 import { useAuth } from "../hooks/useAuth";
 import { rememberAfterLogin } from "../lib/after-login";
+import { installOption, playStoreUrl, promptInstall, visitorId } from "../lib/install";
 
 /**
- * Rota /q/:courtId — onde cai quem aponta a câmera do celular para o QR
- * Code impresso na quadra.
+ * Rotas /q/:courtId e /q/h/:code — onde cai quem aponta a câmera do
+ * celular para um QR Code.
+ *
+ *   /q/:courtId  o QR impresso na placa da quadra
+ *   /q/h/:code   o QR na tela de alguém que já está na fila, nas quadras
+ *                do piloto sem nada na placa (Sprint 5)
  *
  * É o caminho principal de entrada: a pessoa não abriu o app, ela leu um
- * código. Então aqui não há scanner — a URL inteira já é o payload
- * assinado, e basta pedir a localização e validar.
+ * código. Então aqui não há scanner — a URL inteira já é o payload, e
+ * basta pedir a localização e validar.
  */
 export function ScanLanding() {
-  const { courtId } = useParams<{ courtId: string }>();
+  const { courtId, code } = useParams<{ courtId?: string; code?: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { session, loading } = useAuth();
   const [error, setError] = useState<{ title: string; detail: string } | null>(null);
   const [retry, setRetry] = useState(0);
+  const counted = useRef(false);
+  const isInvite = Boolean(code);
+
+  // A abertura do convite conta para o painel do piloto, antes de
+  // qualquer login. Falhar aqui não atrapalha ninguém.
+  useEffect(() => {
+    if (!code || counted.current) return;
+    counted.current = true;
+    void hostInviteOpened(code, visitorId()).catch(() => undefined);
+  }, [code]);
 
   useEffect(() => {
     if (loading) return;
 
-    // Sem login não dá para entrar na fila: guardamos para onde voltar.
+    // Sem login não dá para entrar na fila. No QR da placa vai direto
+    // para o login; no convite, a tela de boas-vindas oferece instalar
+    // o app antes.
     if (!session) {
-      rememberAfterLogin(window.location.pathname + window.location.search);
-      navigate("/entrar", { replace: true });
+      if (!isInvite) {
+        rememberAfterLogin(window.location.pathname + window.location.search);
+        navigate("/entrar", { replace: true });
+      }
       return;
     }
 
@@ -81,6 +101,14 @@ export function ScanLanding() {
           return;
         }
 
+        if (apiError.code === "HOST_INVITE_EXPIRED" || apiError.code === "HOST_QUEUE_CLOSED") {
+          setError({
+            title: apiError.code === "HOST_INVITE_EXPIRED" ? "Este QR venceu" : "Esta fila já foi encerrada",
+            detail: apiError.message ?? "Peça para alguém da fila mostrar o QR de novo.",
+          });
+          return;
+        }
+
         setError({
           title: "Não conseguimos validar este código",
           detail: apiError.message ?? "Tente escanear novamente.",
@@ -91,7 +119,7 @@ export function ScanLanding() {
     return () => {
       cancelled = true;
     };
-  }, [courtId, loading, session, navigate, params, retry]);
+  }, [courtId, code, isInvite, loading, session, navigate, params, retry]);
 
   if (error) {
     return (
@@ -104,5 +132,77 @@ export function ScanLanding() {
     );
   }
 
+  if (!loading && !session && isInvite) {
+    return (
+      <InviteWelcome
+        onContinue={() => {
+          rememberAfterLogin(window.location.pathname);
+          navigate("/entrar");
+        }}
+      />
+    );
+  }
+
   return <Loading what="Confirmando que você está na quadra" />;
+}
+
+/**
+ * Quem escaneou o QR na tela de alguém e ainda não tem conta. Oferece o
+ * app antes do login: o convite espera 10 minutos.
+ */
+function InviteWelcome({ onContinue }: { onContinue: () => void }) {
+  const [option, setOption] = useState(installOption);
+  const store = playStoreUrl();
+
+  async function install() {
+    await promptInstall();
+    setOption(installOption());
+  }
+
+  return (
+    <div className="screen fade" style={{ display: "flex", flexDirection: "column", gap: 18, padding: "36px 18px 28px" }}>
+      <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 56, height: 56, background: "var(--green)", color: "var(--chalk)", borderRadius: 14 }}>
+        <QrIcon size={28} />
+      </span>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span className="bb" style={{ fontSize: 44, lineHeight: 0.92, color: "var(--green)" }}>
+          Chamaram você para a fila
+        </span>
+        <span style={{ fontSize: 15, lineHeight: 1.45 }}>
+          Quem está na fila desta quadra organiza a vez pelo NEQST. Entre com o seu e-mail
+          e pegue o seu lugar — você acompanha a vez pelo celular e recebe o aviso quando
+          a quadra liberar.
+        </span>
+      </div>
+
+      <button type="button" className="press" onClick={onContinue} style={{ ...buttonStyle("primary"), minHeight: 56, fontSize: 16 }}>
+        Entrar na fila
+      </button>
+
+      {option === "prompt" && (
+        <button type="button" className="press" onClick={() => void install()} style={buttonStyle("dark")}>
+          Instalar o app no celular
+        </button>
+      )}
+
+      {option === "ios" && (
+        <p style={{ margin: 0, padding: "10px 12px", background: "var(--chalk)", borderRadius: 10, fontSize: 13, lineHeight: 1.45 }}>
+          <strong>Quer o app no iPhone?</strong> Toque em Compartilhar e depois em
+          “Adicionar à Tela de Início”. Dá para fazer isso depois, também.
+        </p>
+      )}
+
+      {store && option !== "installed" && (
+        <a href={store} target="_blank" rel="noopener noreferrer" className="press" style={{ ...buttonStyle("ghost"), textDecoration: "none" }}>
+          Baixar na Play Store
+        </a>
+      )}
+
+      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: "var(--muted)" }}>
+        O QR vale 10 minutos — tempo de criar a conta. Na hora de entrar, o app confere que
+        você está mesmo na quadra.
+      </p>
+    </div>
+  );
 }
