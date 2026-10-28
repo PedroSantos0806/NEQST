@@ -129,10 +129,38 @@ injetados automaticamente pelo runtime.
 supabase functions deploy          # publica TODAS as funções de supabase/functions/
 ```
 
-Sem argumentos de propósito: uma lista escrita à mão envelhece, e uma
-função esquecida só aparece como 404 no meio de um teste. (Foi o que
-aconteceu: `check-in` e `match` ficaram de fora da lista que este
-documento trazia antes.)
+Sem argumentos de propósito, por **dois** motivos.
+
+O primeiro: uma lista escrita à mão envelhece, e uma função esquecida
+só aparece como 404 no meio de um teste. (Foi o que aconteceu:
+`check-in` e `match` ficaram de fora da lista que este documento
+trazia antes.)
+
+O segundo apareceu depois, e é pior porque não parece erro de deploy.
+Publicar **uma** função deixa as outras com a cópia antiga de
+`_shared/`. Quando um `index.ts` novo encontra um `_shared` velho, o
+worker **não inicia**:
+
+```
+worker boot error: Uncaught SyntaxError: The requested module
+'../_shared/qr.ts' does not provide an export named 'parseHostInvitePayload'
+```
+
+Daí todo request vira **503** — inclusive o `OPTIONS` do CORS, porque
+o preflight é respondido dentro da função. No app a mensagem é só
+"A função 'scan-court' respondeu com erro (503)", que não diz nada
+sobre deploy parcial. Aconteceu com o `scan-court` depois da Sprint 5.
+
+### Conferir que tudo subiu
+
+```bash
+scripts/smoke-functions.sh https://<project-ref>.supabase.co
+```
+
+Bate em cada função com `OPTIONS` (não precisa de login) e separa as
+três respostas que importam: **204** o worker está de pé, **503** ele
+não inicia (deploy parcial), **404** nunca foi publicada. A lista de
+funções sai do próprio repositório, então não envelhece.
 
 As funções hoje são:
 
