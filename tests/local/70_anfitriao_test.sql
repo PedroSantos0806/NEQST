@@ -62,6 +62,11 @@ $$;
 create or replace function pg_temp.q1()
 returns uuid language sql as $$ select 'a5a50000-0000-0000-0000-0000000000a5'::uuid $$;
 
+-- A segunda quadra do parque, usada nos casos que precisam de uma
+-- quadra limpa sem desarrumar a fila da primeira.
+create or replace function pg_temp.q2()
+returns uuid language sql as $$ select 'b5b50000-0000-0000-0000-0000000000b5'::uuid $$;
+
 create or replace function pg_temp.offline_entries()
 returns setof public.queue_entries language sql as $$
   select * from public.queue_entries
@@ -561,6 +566,115 @@ begin
   v := public.court_screen(pg_temp.q1());
   assert v -> 'court' ->> 'queue_mode' = 'fixed_qr', 'modo QR fixo';
   assert v -> 'court' -> 'checkin_methods' = '["qr"]'::jsonb, 'check-in pelo QR da placa';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Montar o grupo não é corrida contra a tolerância
+--
+-- Quem abre a fila ainda vai cadastrar quem já jogava, quem já
+-- esperava sem app e passar o PIN aos amigos. Com o prazo de check-in
+-- correndo desde a abertura, o cron expulsava a pessoa da fila que ela
+-- mesma tinha aberto — e ela não conseguia nem entrar nem reabrir.
+-- ---------------------------------------------------------------------
+do $$
+declare
+  v_entry uuid; v_pin text; v_code text; v_prazo timestamptz; v jsonb;
+  v_ana  uuid := 'a5000000-0000-0000-0000-0000000000a5';
+  v_bia  uuid := 'b5000000-0000-0000-0000-0000000000b5';
+  v_caio uuid := 'c5000000-0000-0000-0000-0000000000c5';
+begin
+  -- O bloco anterior trocou esta quadra para o QR da placa; aqui ela
+  -- volta ao modo anfitrião, com a fila limpa.
+  perform pg_temp.as_user('e5000000-0000-0000-0000-0000000000e5');
+  perform public.admin_upsert_court(p_id => pg_temp.q1(), p_queue_mode => 'host');
+  update public.queue_entries set status = 'done', ended_at = now()
+   where court_id = pg_temp.q1() and status in ('waiting', 'ready', 'playing');
+  update public.matches set ended_at = now()
+   where court_id = pg_temp.q1() and ended_at is null;
+  update public.host_sessions set closed_at = now(), close_reason = 'test_reset'
+   where court_id = pg_temp.q1() and closed_at is null;
+
+  perform pg_temp.as_user(v_ana);
+  perform pg_temp.scan(v_ana, pg_temp.q1(), 'sp-open', 'gps');
+  perform public.open_host_queue('sp-open', null, '{}');
+
+  select e.id, e.call_expires_at into v_entry, v_prazo
+  from public.queue_entry_members m join public.queue_entries e on e.id = m.entry_id
+  where m.user_id = v_ana and m.is_active;
+
+  assert v_prazo is null,
+    format('sozinha na fila, a vaga de quem abriu não tem prazo; veio %s', v_prazo);
+  assert (select status from public.queue_entries where id = v_entry) = 'ready',
+    'e já fica pronta para o check-in';
+  assert not exists (select 1 from public.matches where court_id = pg_temp.q1() and ended_at is null),
+    'abrir a fila não começa o jogo: o tempo conta a partir do check-in';
+
+  -- doze minutos montando o grupo, com o cron passando
+  update public.queue_entries
+     set joined_at = now() - interval '12 minutes', called_at = now() - interval '12 minutes'
+   where id = v_entry;
+  perform public.advance_expired_queues();
+  assert (select status from public.queue_entries where id = v_entry) = 'ready',
+    'doze minutos montando o grupo não podem expulsar quem abriu a fila';
+
+  -- o amigo entra pelo PIN, na mesma vaga
+  select p.pin into v_pin from public.queue_entry_pins p where p.entry_id = v_entry;
+  perform pg_temp.as_user(v_bia);
+  perform pg_temp.scan(v_bia, pg_temp.q1(), 'sp-bia');
+  v := public.join_with_pin('sp-bia', v_pin);
+  assert (v ->> 'joined')::boolean, 'o amigo entra na party antes do check-in';
+  assert (select count(*) from public.queue_entry_members where entry_id = v_entry and is_active) = 2,
+    'os dois na mesma vaga, mesma posição';
+
+  -- chega um segundo grupo: aí sim o relógio começa
+  perform pg_temp.as_user(v_ana);
+  v_code := public.issue_host_invite(pg_temp.q1(), gen_random_uuid()) ->> 'code';
+  perform pg_temp.as_user(v_caio);
+  perform pg_temp.scan(v_caio, pg_temp.q1(), 'sp-caio', 'qr', pg_temp.invite_id_of(v_code));
+  perform public.join_queue('sp-caio', 'double');
+
+  select e.call_expires_at into v_prazo from public.queue_entries e where e.id = v_entry;
+  assert v_prazo is not null, 'com gente atrás, a tolerância passa a valer';
+  assert v_prazo > now() + interval '30 seconds',
+    format('e começa inteira a partir dali, não vencida; veio %s', v_prazo);
+
+  -- e continua protegendo a fila: quem não aparece perde a vez
+  update public.queue_entries set call_expires_at = now() - interval '1 second' where id = v_entry;
+  perform public.advance_expired_queues();
+  assert (select status from public.queue_entries where id = v_entry) = 'expired',
+    'passado o prazo com gente atrás, a vez passa';
+  assert (select e.status from public.queue_entries e
+           where e.court_id = pg_temp.q1() and e.created_by = v_caio) = 'ready',
+    'e o próximo é chamado';
+end $$;
+
+-- A fila aberta e abandonada não pode travar a quadra para sempre,
+-- agora que quem monta o grupo sozinho fica sem prazo.
+do $$
+declare v_sess uuid; v_ana uuid := 'a5000000-0000-0000-0000-0000000000a5';
+begin
+  perform pg_temp.as_user('e5000000-0000-0000-0000-0000000000e5');
+  perform public.admin_upsert_court(p_id => pg_temp.q2(), p_queue_mode => 'host');
+
+  perform pg_temp.as_user(v_ana);
+  perform pg_temp.scan(v_ana, pg_temp.q2(), 'sp-aband', 'gps');
+  perform public.open_host_queue('sp-aband', null, '{}');
+  select s.id into v_sess from public.host_sessions s
+   where s.court_id = pg_temp.q2() and s.closed_at is null;
+
+  assert not public.host_session_is_idle(v_sess), 'recém-aberta, não está esquecida';
+
+  update public.host_sessions set opened_at = now() - interval '40 minutes' where id = v_sess;
+  update public.queue_entries
+     set joined_at = now() - interval '40 minutes', called_at = now() - interval '40 minutes'
+   where host_session_id = v_sess;
+
+  assert public.host_session_is_idle(v_sess),
+    'quarenta minutos sem ninguém se mexer: a fila está esquecida';
+  perform public.advance_expired_queues();
+  assert not exists (select 1 from public.host_sessions
+                      where court_id = pg_temp.q2() and closed_at is null),
+    'e o cron libera a quadra';
 end $$;
 
 rollback;
