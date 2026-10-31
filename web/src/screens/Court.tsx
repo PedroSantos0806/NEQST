@@ -407,14 +407,32 @@ export function Court() {
                 <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>Faça check-in para jogar</span>
               </span>
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                <span className="bb" role="timer" style={{ fontSize: 34, lineHeight: 1 }}>{mmss(callLeft(mine))}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>DE TOLERÂNCIA</span>
+                {/*
+                  Sem prazo correndo (quadra livre, ninguém atrás) o
+                  cartão não mostra relógio: mostrava 0:00, que parece
+                  vez perdida justo para quem ainda está juntando o grupo.
+                */}
+                {callLeft(mine) === null
+                  ? (
+                    <>
+                      <span className="bb" style={{ fontSize: 22, lineHeight: 1.1, textAlign: "right" }}>sem pressa</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>NINGUÉM ATRÁS</span>
+                    </>
+                  )
+                  : (
+                    <>
+                      <span className="bb" role="timer" style={{ fontSize: 34, lineHeight: 1 }}>{mmss(callLeft(mine) ?? 0)}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>DE TOLERÂNCIA</span>
+                    </>
+                  )}
               </span>
             </div>
             <span style={{ fontSize: 13, lineHeight: 1.4 }}>
-              {hostMode
-                ? "Basta um do grupo tocar no botão, já na quadra. Quem chegar depois entra com o turno rolando."
-                : "Basta um do grupo escanear. Quem chegar depois entra com o turno rolando."}
+              {callLeft(mine) === null
+                ? "Passe o PIN para quem veio com você e faça o check-in quando o grupo estiver pronto — o tempo de jogo começa aí."
+                : hostMode
+                  ? "Basta um do grupo tocar no botão, já na quadra. Quem chegar depois entra com o turno rolando."
+                  : "Basta um do grupo escanear. Quem chegar depois entra com o turno rolando."}
             </span>
             <button
               type="button"
@@ -610,8 +628,17 @@ export function Court() {
   );
 }
 
-function callLeft(item: QueueItem): number {
-  if (!item.call_expires_at) return 0;
+/**
+ * Segundos de tolerância que ainda restam, ou `null` quando não há
+ * prazo nenhum correndo.
+ *
+ * A diferença importa: sem prazo é quem abriu a fila e está juntando o
+ * grupo com a quadra livre e ninguém atrás. Devolver 0 aqui fazia a
+ * tela anunciar "tempo esgotado" no exato momento em que a pessoa
+ * abria a fila.
+ */
+function callLeft(item: QueueItem): number | null {
+  if (!item.call_expires_at) return null;
   return Math.max(0, Math.floor((new Date(item.call_expires_at).getTime() - Date.now()) / 1000));
 }
 

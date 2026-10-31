@@ -137,7 +137,14 @@ export function StartedOverlay({
   );
 }
 
-/** Chamaram o seu time: a quadra liberou e o relógio do check-in corre. */
+/**
+ * Chamaram o seu time: a quadra liberou.
+ *
+ * `secondsLeft` é `null` quando NÃO há relógio correndo — o caso de
+ * quem abriu a fila e ainda está juntando o grupo, com ninguém atrás.
+ * Antes isso chegava aqui como 0 e a tela gritava "tempo esgotado" no
+ * instante em que a pessoa abria a fila da quadra vazia.
+ */
 export function CallOverlay({
   courtName,
   parkName,
@@ -149,7 +156,8 @@ export function CallOverlay({
 }: {
   courtName: string;
   parkName: string;
-  secondsLeft: number;
+  /** Segundos de tolerância, ou `null` quando não há prazo correndo. */
+  secondsLeft: number | null;
   groupLabel: string;
   /** Quadra sem QR na placa: o check-in é o botão com a localização. */
   locationCheckIn?: boolean;
@@ -187,24 +195,45 @@ export function CallOverlay({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <span className="bb" style={{ fontSize: 64, lineHeight: 0.86 }}>{courtName} liberada</span>
+        <span className="bb" style={{ fontSize: 64, lineHeight: 0.86 }}>
+          {secondsLeft === null ? `${courtName} é sua` : `${courtName} liberada`}
+        </span>
         <span style={{ fontSize: 15, lineHeight: 1.45 }}>
-          O turno anterior acabou e o seu grupo é o 1º da fila. Basta um de vocês fazer o
-          check-in {locationCheckIn ? "já na quadra" : "por QR ou NFC"} para o turno começar —
-          quem chegar depois entra com o PIN.
+          {secondsLeft === null
+            ? <>Ninguém esperando atrás, então <strong>sem pressa</strong>: passe o PIN para
+               quem veio com você e, quando o grupo estiver completo, faça o
+               check-in {locationCheckIn ? "já na quadra" : "por QR ou NFC"}. O tempo de jogo
+               começa a contar aí.</>
+            : <>O turno anterior acabou e o seu grupo é o 1º da fila. Basta um de vocês fazer o
+               check-in {locationCheckIn ? "já na quadra" : "por QR ou NFC"} para o turno começar —
+               quem chegar depois entra com o PIN.</>}
         </span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", border: "1.5px solid rgba(241,236,239,.35)", borderRadius: 10 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: 12, borderRight: "1.5px solid rgba(241,236,239,.35)" }}>
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", color: "var(--mauve)" }}>TOLERÂNCIA</span>
-          <span className="bb" role="timer" style={{ fontSize: 44, lineHeight: 1 }}>{mmss(secondsLeft)}</span>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", color: "var(--mauve)" }}>
+            {secondsLeft === null ? "TOLERÂNCIA" : "TOLERÂNCIA"}
+          </span>
+          {secondsLeft === null
+            ? (
+              <span className="bb" style={{ fontSize: 28, lineHeight: 1.1 }}>
+                sem pressa
+              </span>
+            )
+            : <span className="bb" role="timer" style={{ fontSize: 44, lineHeight: 1 }}>{mmss(secondsLeft)}</span>}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: 12 }}>
           <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", color: "var(--mauve)" }}>GRUPO</span>
           <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.3 }}>{groupLabel}</span>
         </div>
       </div>
+
+      {secondsLeft === null && (
+        <p style={{ margin: 0, padding: "10px 12px", background: "rgba(241,236,239,.14)", border: "1.5px solid rgba(241,236,239,.4)", borderRadius: 8, fontSize: 13, lineHeight: 1.45 }}>
+          O relógio da tolerância só começa quando alguém entrar na fila atrás de você.
+        </p>
+      )}
 
       {secondsLeft === 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "var(--chalk)", color: "var(--ink)", border: "1.5px solid var(--rust)", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>
@@ -256,7 +285,7 @@ export function CallOverlay({
           fontWeight: 700,
         }}
       >
-        Estou a caminho — ver placar
+        {secondsLeft === null ? "Montar meu grupo primeiro" : "Estou a caminho — ver placar"}
       </button>
     </div>
   );
