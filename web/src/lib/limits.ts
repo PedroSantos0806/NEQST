@@ -30,7 +30,22 @@ export const LIMITS = {
   maxDistanceMeters: { min: 10, max: 20000, label: "O raio de proximidade", unit: "metros" },
   /** courts_call_window_range, convertido de segundos para minutos */
   callWindowMinutes: { min: 1, max: 30, label: "A tolerância para o check-in", unit: "minutos" },
+  /** a faixa que admin_set_match_time aceita */
+  matchRemainingMinutes: { min: 0, max: 240, label: "O tempo restante do turno", unit: "minutos" },
 } satisfies Record<string, Range>;
+
+/**
+ * O total de minutos que um passo do ajuste de relógio deve mandar.
+ *
+ * O contrato da RPC é o total ("faltam 12"), não o passo ("+5"): assim
+ * dois administradores mexendo ao mesmo tempo não somam ajustes sem
+ * perceber. Então o botão de +5 calcula o total aqui — e preso na faixa,
+ * para "-5" com 2 minutos no relógio não virar um pedido de -3.
+ */
+export function stepMatchMinutes(remainingSeconds: number, stepMinutes: number): number {
+  const { min, max } = LIMITS.matchRemainingMinutes;
+  return Math.min(max, Math.max(min, Math.round(remainingSeconds / 60) + stepMinutes));
+}
 
 export type Parsed = { ok: true; value: number } | { ok: false; message: string };
 

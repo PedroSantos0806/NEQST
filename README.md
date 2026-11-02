@@ -19,6 +19,10 @@ Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
   na placa. A primeira pessoa com o app abre a fila, quem chega depois
   entra pelo QR na tela de quem já está nela, e o painel do piloto conta
   a adesão.
+- [Sprint 6](docs/sprint6.md) — a quadra anda sozinha: no fim do tempo
+  há 1 minuto de troca, o turno do próximo começa sem check-in e quem
+  jogou volta para o fim da fila. Quem está na fila só precisa entrar
+  quando chega e sair quando vai embora.
 
 O que difere entre web e app (push, QR Code, CORS, login) está em
 [docs/plataformas.md](docs/plataformas.md).
@@ -197,6 +201,11 @@ vaga, turno fixo e tolerância de check-in configurável
 vagas sem app, convite que troca a cada 30 s com a distância conferida
 na hora de entrar, check-in pelo botão com GPS e a aba Piloto na
 administração ([`docs/sprint5.md`](docs/sprint5.md)).
+
+**Sprint 6:** a rotação automática — troca de 1 min entre turnos, o
+turno seguinte começando sozinho, o grupo que jogou voltando para o fim
+da fila com o mesmo PIN, e a espera estimada contando a troca
+([`docs/sprint6.md`](docs/sprint6.md)).
 
 Sugestões que ficaram registradas para depois, em
 [`docs/sprint2.md`](docs/sprint2.md#o-que-não-entrou): rate limiting no

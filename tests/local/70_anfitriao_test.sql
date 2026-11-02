@@ -440,7 +440,12 @@ begin
   assert (v -> 'host' ->> 'is_me')::boolean, format('a Bia herdou: %s', v -> 'host');
 
   -- E agora é ela quem anda com o grupo sem app do fim da fila.
-  v := public.host_mark_offline((select id from pg_temp.offline_entries() where status = 'waiting'), 'gave_up');
+  -- A rotação pode ter devolvido para a fila um grupo sem app que já
+  -- jogou, então existe mais de uma vaga esperando: a do fim é a última
+  -- por queue_number.
+  v := public.host_mark_offline(
+         (select id from pg_temp.offline_entries() where status = 'waiting'
+           order by queue_number desc limit 1), 'gave_up');
   assert (select host_user_id from public.host_sessions where court_id = pg_temp.q1() and closed_at is null)
          = 'b5000000-0000-0000-0000-0000000000b5', 'a herança fica gravada';
 
@@ -517,8 +522,11 @@ begin
 
   -- Faz 10 min: ainda aberta.
   update public.host_sessions set opened_at = now() - interval '2 hours' where court_id = pg_temp.q1();
+  -- first_joined_at é o que a regra lê desde a rotação automática: a
+  -- chegada de verdade, que uma vaga recriada a cada turno não renova.
   update public.queue_entries
-     set joined_at = now() - interval '1 hour', started_at = null,
+     set joined_at = now() - interval '1 hour',
+         first_joined_at = now() - interval '1 hour', started_at = null,
          ended_at = case when ended_at is null then null else now() - interval '10 minutes' end,
          left_at  = case when left_at  is null then null else now() - interval '10 minutes' end
    where court_id = pg_temp.q1();
@@ -666,7 +674,9 @@ begin
 
   update public.host_sessions set opened_at = now() - interval '40 minutes' where id = v_sess;
   update public.queue_entries
-     set joined_at = now() - interval '40 minutes', called_at = now() - interval '40 minutes'
+     set joined_at = now() - interval '40 minutes',
+         first_joined_at = now() - interval '40 minutes',
+         called_at = now() - interval '40 minutes'
    where host_session_id = v_sess;
 
   assert public.host_session_is_idle(v_sess),

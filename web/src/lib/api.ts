@@ -189,6 +189,31 @@ export const leaveQueue = (entryId: string, reason?: string) =>
 export const checkIn = (scanToken: string) =>
   callFunction<MatchState>("check-in", { body: { scanToken } });
 
+/**
+ * Executa na quadra o que já venceu — o turno, a troca, uma chamada —
+ * e devolve a tela.
+ *
+ * Quem decide é o banco: a função não faz nada se não houver nada
+ * vencido. Existe porque o cron roda de minuto em minuto, e quem está
+ * na quadra vendo o contador da troca zerar não deveria esperar até
+ * um minuto para o próximo turno começar.
+ */
+export const nudgeCourt = (courtId: string) =>
+  rpc<CourtScreen>("nudge_court", { p_court_id: courtId });
+
+/**
+ * Administração: corrigir quanto falta no turno em andamento.
+ *
+ * Manda o total, não o passo — "faltam 12 minutos". Dois admins mexendo
+ * ao mesmo tempo não somam ajustes sem perceber, e repetir a chamada não
+ * muda nada. Zero encerra o turno na hora.
+ */
+export const setMatchTime = (matchId: string, remainingMinutes: number) =>
+  rpc<CourtScreen>("admin_set_match_time", {
+    p_match_id: matchId,
+    p_remaining_minutes: remainingMinutes,
+  });
+
 /** O grupo devolve a quadra antes do fim do turno. */
 export const finishTurn = (matchId: string) =>
   callFunction<MatchState>("match", { body: { matchId } });

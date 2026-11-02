@@ -344,10 +344,17 @@ begin
 end $$;
 
 -- =====================================================================
--- Fim do slot: o turno acaba e a fila anda
+-- Fim do slot: o turno acaba, a quadra entra na troca e quem jogou vai
+-- para o fim da fila
+--
+-- Aqui a regra mudou (migration 20261102120000): antes, o fim do slot
+-- liberava a quadra e tirava da fila quem tinha jogado. Agora a quadra
+-- roda — e a tolerância sai de cena, porque o turno do próximo começa
+-- sozinho. O detalhe da rotação está em 80_rotacao_test.sql; estes
+-- asserts cobrem o que o fim do slot continua garantindo.
 -- =====================================================================
 do $$
-declare v jsonb; v_match uuid; v_caio_status public.queue_entry_status;
+declare v jsonb; v_match uuid; v_caio public.queue_entries; v_bruno public.queue_entries;
 begin
   select id into v_match from public.matches where ended_at is null;
   -- Simula o relógio: o slot venceu.
@@ -360,14 +367,25 @@ begin
     'motivo deveria ser slot_expired';
   assert (select winner_side from public.matches where id = v_match) is null, 'não há vencedor';
 
-  select status into v_caio_status from public.queue_entries
-  where created_by = 'c0000000-0000-0000-0000-00000000000c' and status in ('waiting', 'ready');
-  assert v_caio_status = 'ready', format('Caio deveria ser chamado: %s', v_caio_status);
+  select e.* into v_caio from public.queue_entries e
+  where e.created_by = 'c0000000-0000-0000-0000-00000000000c' and e.status in ('waiting', 'ready');
+  assert v_caio.status = 'ready', format('Caio deveria ser chamado: %s', v_caio.status);
+  assert v_caio.call_expires_at is null,
+    'na troca não há prazo: o turno do Caio começa sozinho';
+
+  -- O Bruno, que acabou de jogar, está no fim da fila.
+  select e.* into v_bruno from public.queue_entries e
+  where e.created_by = 'b0000000-0000-0000-0000-00000000000b' and e.status in ('waiting', 'ready');
+  assert v_bruno.turn_number = 2, format('segundo turno do Bruno: %s', v_bruno.turn_number);
+  assert (select qp.position from public.queue_positions qp where qp.entry_id = v_bruno.id) = 2,
+    'o Bruno entra atrás do Caio';
+
+  assert (select changeover_until from public.courts
+          where id = 'aaaa0000-0000-0000-0000-00000000000a') > now(),
+    'a quadra está na troca de 1 minuto';
 end $$;
 
--- =====================================================================
--- Chamada não atendida: perde a vez
--- =====================================================================
+-- O Elias chega durante a troca: 3º, atrás do Bruno que voltou
 set local "request.jwt.claim.sub" = 'e0000000-0000-0000-0000-00000000000e';
 do $$
 declare v jsonb;
@@ -375,34 +393,78 @@ begin
   perform pg_temp.scan('e0000000-0000-0000-0000-00000000000e',
                        'aaaa0000-0000-0000-0000-00000000000a', 'tok-elias-1');
   v := public.join_queue('tok-elias-1', 'single');
-  assert (v ->> 'position')::int = 2, format('Elias é o 2º: %s', v);
+  assert (v ->> 'position')::int = 3, format('Elias é o 3º: %s', v);
+end $$;
+
+-- Acabou o minuto: o turno do Caio começa sem ninguém fazer nada
+do $$
+declare v jsonb;
+begin
+  update public.courts set changeover_until = now() - interval '1 second'
+  where id = 'aaaa0000-0000-0000-0000-00000000000a';
+
+  v := public.advance_expired_queues();
+  assert (v ->> 'turns_started')::int = 1, format('a quadra começou o turno sozinha: %s', v);
+  assert (select status from public.queue_entries
+          where created_by = 'c0000000-0000-0000-0000-00000000000c'
+            and court_id = 'aaaa0000-0000-0000-0000-00000000000a'
+          order by queue_number desc limit 1) = 'playing',
+    'o Caio está em quadra sem ter feito check-in';
+end $$;
+
+-- =====================================================================
+-- Chamada não atendida: perde a vez
+--
+-- A tolerância continua existindo onde a quadra NÃO roda sozinha: o
+-- grupo devolveu a quadra no meio do turno, então o próximo não estava
+-- com o olho no relógio e entra pelo check-in, como sempre.
+-- =====================================================================
+set local "request.jwt.claim.sub" = 'c0000000-0000-0000-0000-00000000000c';
+do $$
+declare v jsonb; v_match uuid; v_bruno public.queue_entries;
+begin
+  select id into v_match from public.matches where ended_at is null;
+  v := public.finish_my_turn(v_match);
+  assert v ->> 'end_reason' = 'finished_by_group', format('devolveu a quadra: %s', v);
+
+  assert (select changeover_until from public.courts
+          where id = 'aaaa0000-0000-0000-0000-00000000000a') is null,
+    'devolver a quadra antes da hora não abre troca';
+
+  select e.* into v_bruno from public.queue_entries e
+  where e.created_by = 'b0000000-0000-0000-0000-00000000000b' and e.status in ('waiting', 'ready');
+  assert v_bruno.status = 'ready', format('Bruno foi chamado: %s', v_bruno.status);
+  assert v_bruno.call_expires_at > now(), 'e com a tolerância valendo';
 end $$;
 
 do $$
-declare v jsonb; v_caio public.queue_entry_status; v_elias public.queue_entry_status;
+declare v jsonb; v_bruno public.queue_entry_status; v_elias public.queue_entry_status;
 begin
-  -- A tolerância do Caio venceu
+  -- A tolerância do Bruno venceu
   update public.queue_entries set call_expires_at = now() - interval '1 second'
-  where created_by = 'c0000000-0000-0000-0000-00000000000c' and status = 'ready';
+  where created_by = 'b0000000-0000-0000-0000-00000000000b' and status = 'ready';
 
   v := public.advance_expired_queues();
   assert (v ->> 'entries_expired')::int = 1, format('1 chamada expirada: %s', v);
 
-  select status into v_caio from public.queue_entries
-  where created_by = 'c0000000-0000-0000-0000-00000000000c'
-    and court_id = 'aaaa0000-0000-0000-0000-00000000000a';
+  select status into v_bruno from public.queue_entries
+  where created_by = 'b0000000-0000-0000-0000-00000000000b'
+    and court_id = 'aaaa0000-0000-0000-0000-00000000000a'
+  order by queue_number desc limit 1;
   select status into v_elias from public.queue_entries
   where created_by = 'e0000000-0000-0000-0000-00000000000e';
 
-  assert v_caio = 'expired', format('Caio perdeu a vez: %s', v_caio);
+  assert v_bruno = 'expired', format('Bruno perdeu a vez: %s', v_bruno);
   assert (select cancel_reason from public.queue_entries
-          where created_by = 'c0000000-0000-0000-0000-00000000000c'
-            and court_id = 'aaaa0000-0000-0000-0000-00000000000a') = 'no_show',
+          where created_by = 'b0000000-0000-0000-0000-00000000000b'
+            and court_id = 'aaaa0000-0000-0000-0000-00000000000a'
+          order by queue_number desc limit 1) = 'no_show',
     'motivo no_show';
   assert v_elias = 'ready', format('Elias assume a vez: %s', v_elias);
 end $$;
 
 -- Check-in depois da tolerância é recusado
+set local "request.jwt.claim.sub" = 'e0000000-0000-0000-0000-00000000000e';
 do $$
 declare v_code text;
 begin
@@ -607,7 +669,11 @@ begin
   v := public.court_screen('cccc0000-0000-0000-0000-00000000000c');
   assert (v -> 'court' ->> 'slot_minutes')::int = 60, 'slot próprio da quadra';
   assert v -> 'court' ->> 'surface_label' = 'Grama', 'grama';
-  assert (v ->> 'total_wait_seconds')::int = 3600, format('1 time x 60 min: %s', v ->> 'total_wait_seconds');
+  -- Uma rodada da quadra custa o slot MAIS a troca de 1 min: quem entrar
+  -- agora espera o time da frente jogar 60 min e a quadra trocar.
+  assert (v ->> 'turn_seconds')::int = 3660, format('rodada: %s', v ->> 'turn_seconds');
+  assert (v ->> 'total_wait_seconds')::int = 3660,
+    format('1 time x (60 min + troca): %s', v ->> 'total_wait_seconds');
 end $$;
 
 rollback;
