@@ -182,10 +182,8 @@ Saídas, da mais rápida à definitiva:
 
 1. **Agora, sem configurar nada:** entre com o Google. É por isso que a
    mensagem de erro aponta para ele — não depende de e-mail.
-2. **Para o piloto:** desligue a confirmação de e-mail em
-   **Authentication › Providers › Email › Confirm email**. O app já
-   funciona dos dois jeitos: sem confirmação o `signUp` devolve sessão
-   e entra direto. Isso tira do caminho o maior consumidor de envios.
+2. **Para o piloto:** desligue a confirmação de e-mail — o maior
+   consumidor de envios. Como fazer e o que muda está logo abaixo.
 3. **Antes de abrir ao público:** SMTP próprio, como acima. Depois dele,
    ajuste o teto em **Authentication › Rate Limits** para algo
    compatível com o plano do provedor.
@@ -193,6 +191,55 @@ Saídas, da mais rápida à definitiva:
 > Cadastrar várias contas de teste seguidas estoura o limite em
 > minutos. Para o time de QA, o caminho barato é o Google ou a
 > confirmação desligada.
+
+### Desligar a confirmação de e-mail
+
+É o caminho mais curto para um público que não quer saber de caixa de
+entrada: a pessoa escolhe e-mail e senha, aperta *Criar conta* e já está
+dentro.
+
+**Authentication › Sign In / Providers › Email** (em alguns painéis o
+menu aparece só como *Providers*) → desligue **Confirm email** →
+*Save*. Vale na hora, para o cadastro seguinte. **Não precisa mexer no
+app**: o `signUp` já trata os dois casos — quando o Supabase devolve
+sessão, a tela entra direto; quando não devolve, ela pede a confirmação.
+
+#### Quem já tinha se cadastrado continua travado
+
+Desligar a confirmação vale para cadastro **novo**. Quem criou a conta
+antes — inclusive quem criou justamente quando o limite estourou e o
+e-mail não saiu — fica com a conta pendente e esbarra em *"Sua conta
+ainda não foi confirmada"*. Esperar não resolve: aquele e-mail não vai
+chegar.
+
+Para liberar essas contas, cole
+[`db/confirmar_cadastros_pendentes.sql`](../db/confirmar_cadastros_pendentes.sql)
+no **SQL Editor**. Ele primeiro lista quem está pendente e só depois
+confirma — olhe a lista antes de rodar o segundo passo.
+
+#### O que você perde
+
+| | Com confirmação | Sem confirmação |
+|---|---|---|
+| Prova que o e-mail é da pessoa | sim | **não** |
+| Erro de digitação no e-mail | o cadastro não completa | a conta nasce com um endereço que não existe |
+| Gasta envio no cadastro | sim | não |
+
+O caso que dói é o segundo: `maria@gmial.com` entra normalmente e só
+descobre o problema no dia em que esquecer a senha — porque
+**"Esqueci minha senha" continua dependendo de e-mail**, confirmação
+ligada ou não. Duas saídas para esse dia, nenhuma exigindo e-mail:
+
+- **Google.** Quem entra pelo Google não tem senha para esquecer, e a
+  conta já nasce confirmada. Para um público que esquece senha com
+  facilidade, é o caminho mais seguro — vale apontar isso na hora do
+  cadastro.
+- **Você troca a senha.** **Authentication › Users**, ache a pessoa,
+  menu `…` › *Reset password* (ou defina uma senha nova e passe a ela
+  pessoalmente, para trocar depois em *Perfil*).
+
+Religue a confirmação quando abrir ao público — e só depois de o SMTP
+próprio estar de pé, senão o cadastro volta a travar no limite.
 
 ---
 

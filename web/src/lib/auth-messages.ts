@@ -5,7 +5,14 @@
 import { MIN_PASSWORD } from "./password";
 
 const MESSAGES: Array<[RegExp, string]> = [
-  [/email not confirmed/i, "Confirme o seu cadastro no e-mail antes de entrar."],
+  // Com a confirmação desligada no painel, a conta nova entra direto —
+  // mas as criadas ANTES continuam pendentes, e o e-mail delas pode
+  // nunca ter saído (limite do remetente nativo). Mandar "confirme no
+  // e-mail" e parar aí é um beco sem saída: diz também as duas saídas
+  // que não dependem daquele e-mail.
+  [/email not confirmed/i,
+   "Sua conta ainda não foi confirmada. Procure o e-mail de confirmação, inclusive no spam. "
+   + "Se ele não chegou, entre com o Google ou peça ao administrador da quadra para liberar o seu cadastro."],
   [/invalid login credentials/i, "E-mail ou senha não conferem."],
   [/user already registered|already been registered/i, "Já existe uma conta com esse e-mail. Faça login."],
   // O servidor responde com o mínimo DELE (6). Repetir "8" aqui
