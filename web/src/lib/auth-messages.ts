@@ -13,8 +13,13 @@ const MESSAGES: Array<[RegExp, string]> = [
   [/password should be at least/i,
    `A senha precisa de pelo menos ${MIN_PASSWORD} caracteres. Pode ser só números, como um PIN.`],
   [/unable to validate email|invalid email/i, "Esse e-mail não parece válido."],
+  // O e-mail nativo do Supabase envia pouquíssimo por hora e é só para
+  // desenvolvimento — num teste com várias pessoas cadastrando, o
+  // limite estoura em minutos. Mandar "espere" é um beco sem saída:
+  // o Google entra agora e não gasta e-mail nenhum.
   [/email rate limit exceeded|over_email_send_rate_limit/i,
-   "Muitos e-mails enviados em sequência. Espere alguns minutos e tente de novo."],
+   "O envio de e-mails atingiu o limite do servidor. Entre com o Google aqui ao lado — "
+   + "funciona na hora e não depende de e-mail. Por e-mail, tente de novo em alguns minutos."],
   [/for security purposes|request this after/i,
    "Aguarde alguns segundos antes de tentar de novo."],
   [/token has expired|otp_expired|expired/i,
