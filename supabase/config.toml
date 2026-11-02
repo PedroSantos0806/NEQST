@@ -42,6 +42,21 @@ enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
 enable_signup = true
 
+# Senha: o mais simples que o Supabase deixa.
+#
+# `minimum_password_length` não desce abaixo de 6 — o Auth eleva
+# qualquer valor menor ao subir (`defaultMinPasswordLength`), então
+# escrever 4 aqui daria a falsa impressão de que 4 funciona.
+#
+# `password_requirements` vazio é o que permite um PIN: sem isso, o
+# servidor passa a exigir mistura de tipos de caractere e "123456" é
+# recusado.
+#
+# O mesmo precisa estar no Dashboard do projeto hospedado — este
+# arquivo vale só para o `supabase start` local. Ver docs/auth.md.
+minimum_password_length = 6
+password_requirements = ""
+
 [auth.email]
 enable_signup = true
 enable_confirmations = false

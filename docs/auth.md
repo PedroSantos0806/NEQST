@@ -81,6 +81,57 @@ http://localhost:5173/**
 
 ---
 
+## 1.5. A regra de senha
+
+Quem cadastra está de pé na quadra, no sol, com o celular na mão. A
+senha é a mais simples que o Supabase deixa:
+
+- **mínimo de 6 caracteres**;
+- **só letras sem acento e números** — sem espaço, acento ou símbolo;
+- **pode ser um PIN**: `123456` é uma senha válida, de propósito.
+
+> **Por que 6 e não 4.** O mínimo não é escolha do app. O Supabase Auth
+> eleva qualquer valor menor ao subir:
+>
+> ```go
+> if config.Password.MinLength < defaultMinPasswordLength {
+>     config.Password.MinLength = defaultMinPasswordLength  // 6
+> }
+> ```
+>
+> Pedir 4 na tela faria o cadastro ser aceito no app e recusado pelo
+> servidor em seguida, com a mensagem em inglês. Seis é o piso real.
+
+### Onde isso é configurado
+
+Em **dois** lugares, e os dois precisam bater:
+
+1. **`supabase/config.toml`** — vale para o `supabase start` local.
+2. **Dashboard do projeto hospedado** — é o que vale em produção, e
+   **não** vem deste repositório: Authentication › Providers › Email.
+   - *Minimum password length*: **6**
+   - *Required characters*: **No required characters**
+
+Se o segundo não for mexido, o app aceita `123456` na tela e o servidor
+recusa com "Password should contain at least one character of each…".
+
+### O que compensa a senha curta
+
+Uma senha de 6 dígitos tem 1 milhão de combinações: dá para varrer. O
+que segura isso não é o tamanho, é o resto:
+
+- **Rate limiting** — Authentication › Rate Limits. O padrão do
+  Supabase já limita tentativas por IP; vale conferir antes do piloto.
+- **Senhas vazadas** — Authentication › Providers › Email › *Prevent
+  use of leaked passwords* (checa contra o HaveIBeenPwned). Liga sem
+  custo e barra `123456` e companhia.
+- **Login com Google**, que já funciona e dispensa senha (seção 1).
+
+> Vale lembrar o que a senha protege aqui: um perfil e um lugar na
+> fila de uma quadra pública. Não há pagamento nem dado sensível. É o
+> que torna a troca aceitável — e é o que muda se o app passar a
+> guardar outra coisa.
+
 ## 2. Personalizar os e-mails
 
 Os templates prontos estão em

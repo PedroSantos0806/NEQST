@@ -2,11 +2,16 @@
  * O Supabase responde em inglês e com termos de quem escreveu o
  * servidor. Quem está na beira da quadra precisa saber o que fazer.
  */
+import { MIN_PASSWORD } from "./password";
+
 const MESSAGES: Array<[RegExp, string]> = [
   [/email not confirmed/i, "Confirme o seu cadastro no e-mail antes de entrar."],
   [/invalid login credentials/i, "E-mail ou senha não conferem."],
   [/user already registered|already been registered/i, "Já existe uma conta com esse e-mail. Faça login."],
-  [/password should be at least/i, "A senha precisa de pelo menos 8 caracteres."],
+  // O servidor responde com o mínimo DELE (6). Repetir "8" aqui
+  // mandava a pessoa alongar uma senha que já seria aceita.
+  [/password should be at least/i,
+   `A senha precisa de pelo menos ${MIN_PASSWORD} caracteres. Pode ser só números, como um PIN.`],
   [/unable to validate email|invalid email/i, "Esse e-mail não parece válido."],
   [/email rate limit exceeded|over_email_send_rate_limit/i,
    "Muitos e-mails enviados em sequência. Espere alguns minutos e tente de novo."],
