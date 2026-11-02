@@ -92,3 +92,18 @@ jobs:
           scripts/build-full-setup.sh
           git diff --exit-code db/full_setup.sql \
             || { echo "::error::db/full_setup.sql desatualizado — rode scripts/build-full-setup.sh"; exit 1; }
+
+      # O arquivo que se cola no SQL Editor do Supabase. Estar em dia com
+      # as migrations não garante que ele RODA: já aconteceu de uma
+      # resolução feita à mão quebrar com "syntax error" na linha 8027,
+      # com as migrations todas passando. Então ele é aplicado de
+      # verdade, num banco limpo — e duas vezes, porque é idempotente.
+      - name: db/full_setup.sql aplica num banco limpo (duas vezes)
+        env:
+          PGPASSWORD: postgres
+          PSQL: psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q
+        run: |
+          $PSQL -d postgres -c 'create database neqst_full;'
+          $PSQL -d neqst_full -f tests/local/00_supabase_stub.sql
+          $PSQL -d neqst_full -f db/full_setup.sql
+          $PSQL -d neqst_full -f db/full_setup.sql

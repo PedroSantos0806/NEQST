@@ -77,6 +77,8 @@ export interface QueueItem {
   stack: Racket[];
   stack_more: number;
   eta_seconds: number;
+  /** Quantos turnos este grupo já tem na sequência: 2 ou mais = já jogou e voltou para o fim. */
+  turn_number?: number;
   /** Vaga de quem está na fila sem o app; só quem organiza a fila mexe nela. */
   is_offline?: boolean;
   offline_label?: string | null;
@@ -93,6 +95,8 @@ export interface CourtScreen {
     is_active: boolean;
     slot_minutes: number;
     call_window_seconds: number;
+    /** O minuto de troca entre um turno e o próximo. */
+    changeover_seconds: number;
     /** "host": piloto sem nada na placa (Sprint 5). */
     queue_mode?: QueueMode;
     checkin_methods: Array<"qr" | "nfc" | "gps">;
@@ -104,6 +108,9 @@ export interface CourtScreen {
   park: { id: string; name: string; district: string | null };
   match: MatchState | null;
   is_live: boolean;
+  /** A quadra está no minuto de troca: sem partida, mas com grupo entrando. */
+  is_changeover?: boolean;
+  changeover?: Changeover | null;
   status_text: string;
   players_line: string;
   queue: QueueItem[];
@@ -111,6 +118,8 @@ export interface CourtScreen {
   queue_text: string;
   remaining_seconds: number;
   total_wait_seconds: number;
+  /** Quanto custa uma rodada da quadra: o turno mais a troca. */
+  turn_seconds?: number;
   next_position_label: string;
   my_entry: QueueItem | null;
   my_group: MyGroup | null;
@@ -125,6 +134,19 @@ export interface CourtScreen {
 }
 
 export type QueueMode = "fixed_qr" | "host";
+
+/**
+ * O minuto entre dois turnos: quem jogou sai, o próximo entra. No fim
+ * dele o turno do próximo começa sozinho — ninguém precisa fazer nada.
+ */
+export interface Changeover {
+  until: string;
+  seconds_left: number;
+  next_entry_id: string | null;
+  next_label: string | null;
+  next_is_mine: boolean;
+  text: string;
+}
 
 export interface HostInfo {
   session_id: string;

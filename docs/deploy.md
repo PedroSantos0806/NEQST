@@ -225,6 +225,13 @@ select cron.schedule('neqst-advance-queues', '* * * * *',
 Sprint 5: a mesma `advance_expired_queues()` fecha a fila com anfitrião
 esquecida (30 min sem ninguém com o app e sem turno). Nada a agendar.
 
+Sprint 6: é ela também que, no fim do minuto de troca, **começa o turno
+do próximo grupo** — sem esse agendamento de minuto em minuto a quadra
+não anda sozinha, que é a regra toda da
+[Sprint 6](sprint6.md). Quem está com a tela da quadra aberta chama
+`nudge_court()` quando a contagem zera, para não esperar o tique; o cron
+é a rede de segurança para quando ninguém está olhando.
+
 Conferir: `select * from cron.job;` e `select * from cron.job_run_details order by start_time desc limit 20;`
 
 ## 6. Storage das fotos (Sprint 2)
