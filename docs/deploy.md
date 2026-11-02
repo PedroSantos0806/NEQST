@@ -71,7 +71,9 @@ select tablename, rowsecurity from pg_tables where schemaname = 'public';  -- tu
 
 Dashboard → **Authentication → Providers**:
 
-- **Email**: habilitado. Senha mínima de 8 caracteres.
+- **Email**: habilitado. *Minimum password length* **6** e *Required
+  characters* em **No required characters** — é o que deixa a senha
+  ser um PIN. Ver [a regra de senha](auth.md#15-a-regra-de-senha).
 - **Google**: Client ID e Secret do Google Cloud Console (OAuth 2.0).
 - **Apple**: Services ID + chave `.p8` do Apple Developer.
   Obrigatório na App Store para qualquer app com login social.

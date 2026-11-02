@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../hooks/useAuth";
 import { authMessage, stripAuthParams, urlAuthError, withTimeout } from "../lib/auth-messages";
+import { MIN_PASSWORD, PASSWORD_HINT, checkPassword } from "../lib/password";
 import { callbackUrl, takeAfterLogin } from "../lib/after-login";
 import { buttonStyle } from "../components/ui";
 
@@ -65,6 +66,19 @@ export function Login() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+
+    // Conferido aqui, antes da viagem: o servidor recusa a senha curta
+    // com a mensagem dele, em inglês, e a pessoa fica sem saber o que
+    // corrigir. Só no cadastro — quem já tem conta entra com a senha
+    // que tem, mesmo que não siga a regra de hoje.
+    if (mode === "signup") {
+      const check = checkPassword(password);
+      if (!check.ok) {
+        setMessage({ tone: "error", text: check.message });
+        return;
+      }
+    }
+
     setBusy(true);
     setMessage(null);
 
@@ -184,11 +198,13 @@ export function Login() {
               onChange={(e) => setPassword(e.target.value)}
               autoComplete={mode === "signup" ? "new-password" : "current-password"}
               required
-              minLength={8}
+              minLength={MIN_PASSWORD}
+              // `inputMode` não restringe o teclado a números de propósito:
+              // a senha pode ser um PIN, mas também pode ter letras.
               style={inputStyle}
             />
             {mode === "signup" && (
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Pelo menos 8 caracteres.</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{PASSWORD_HINT}</span>
             )}
           </label>
         )}

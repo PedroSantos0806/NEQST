@@ -11,6 +11,7 @@ import { Camera, Check, ChevronLeft, ChevronRight, Lock } from "../components/ic
 import { ErrorState, Loading, buttonStyle } from "../components/ui";
 import { initialsOf } from "../lib/format";
 import { authMessage } from "../lib/auth-messages";
+import { MIN_PASSWORD, PASSWORD_HINT, checkPassword } from "../lib/password";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../hooks/useAuth";
 import type { PaletteColor, ProfileSummary } from "../lib/types";
@@ -93,8 +94,9 @@ export function Profile() {
   }
 
   async function savePassword() {
-    if (newPassword.length < 8) {
-      setNotice("A senha precisa de pelo menos 8 caracteres.");
+    const check = checkPassword(newPassword);
+    if (!check.ok) {
+      setNotice(check.message);
       return;
     }
     setBusy(true);
@@ -296,11 +298,11 @@ export function Profile() {
                         value={newPassword}
                         onChange={(event) => setNewPassword(event.target.value)}
                         autoComplete="new-password"
-                        minLength={8}
+                        minLength={MIN_PASSWORD}
                         style={{ height: 46, padding: "0 12px", background: "var(--bg)", border: "1.5px solid rgba(47,70,41,.35)", borderRadius: 8, fontSize: 15 }}
                       />
                       <span style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)" }}>
-                        Pelo menos 8 caracteres.
+                        {PASSWORD_HINT}
                       </span>
                     </label>
                     <button type="button" className="press" disabled={busy} onClick={() => void savePassword()} style={{ minHeight: 46, background: "var(--green)", color: "var(--chalk)", border: 0, borderRadius: 8, fontSize: 14, fontWeight: 700 }}>
