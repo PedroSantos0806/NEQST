@@ -161,6 +161,39 @@ preenche no envio.
 > grátis suficiente para começar). Sem isso, numa manhã movimentada os
 > cadastros simplesmente param de receber o e-mail.
 
+### "O envio de e-mails atingiu o limite do servidor"
+
+Esse é o limite do e-mail nativo batendo — **poucos envios por hora no
+projeto inteiro**, somando cadastro, recuperação de senha e convites.
+Não é bug do app: o remetente embutido existe só para o desenvolvedor
+testar sozinho.
+
+O que gasta envio, em ordem de peso:
+
+| Ação | Gasta e-mail? |
+|---|---|
+| Cadastro **com** confirmação ligada | sim, um por cadastro |
+| Cadastro **sem** confirmação | **não** |
+| "Esqueci minha senha" | sim, um por pedido |
+| Entrar com **Google** | **não** |
+| Entrar com e-mail e senha | **não** |
+
+Saídas, da mais rápida à definitiva:
+
+1. **Agora, sem configurar nada:** entre com o Google. É por isso que a
+   mensagem de erro aponta para ele — não depende de e-mail.
+2. **Para o piloto:** desligue a confirmação de e-mail em
+   **Authentication › Providers › Email › Confirm email**. O app já
+   funciona dos dois jeitos: sem confirmação o `signUp` devolve sessão
+   e entra direto. Isso tira do caminho o maior consumidor de envios.
+3. **Antes de abrir ao público:** SMTP próprio, como acima. Depois dele,
+   ajuste o teto em **Authentication › Rate Limits** para algo
+   compatível com o plano do provedor.
+
+> Cadastrar várias contas de teste seguidas estoura o limite em
+> minutos. Para o time de QA, o caminho barato é o Google ou a
+> confirmação desligada.
+
 ---
 
 ## 3. O administrador
