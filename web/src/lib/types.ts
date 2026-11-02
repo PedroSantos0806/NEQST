@@ -50,6 +50,9 @@ export interface MatchState {
   is_live: boolean;
   elapsed_seconds: number;
   remaining_seconds: number;
+  /** O administrador corrigiu o relógio deste turno. */
+  time_adjusted_at?: string | null;
+  time_adjusted_seconds?: number;
   /** Turno de um grupo sem app — quem já jogava quando a fila abriu, ou um registrado pelo anfitrião. */
   is_offline?: boolean;
   offline_label?: string | null;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIMITS, rangeHint, readNumber } from "../limits";
+import { LIMITS, rangeHint, readNumber, stepMatchMinutes } from "../limits";
 
 /**
  * O formulário de quadra tinha `Number(campo) || padrão`: texto virava
@@ -61,5 +61,31 @@ describe("readNumber", () => {
 describe("rangeHint", () => {
   it("escreve a faixa para caber na dica do campo", () => {
     expect(rangeHint(LIMITS.slotMinutes)).toBe("De 20 a 90 minutos.");
+  });
+});
+
+/**
+ * O ajuste de relógio do administrador. A RPC recebe o TOTAL de minutos
+ * restantes, não o passo, então é aqui que "+5" vira um número — e é
+ * aqui que ele é preso na faixa, para o botão nunca mandar algo que o
+ * banco vai recusar na cara de quem está na quadra.
+ */
+describe("stepMatchMinutes", () => {
+  it("soma o passo ao que falta, em minutos", () => {
+    expect(stepMatchMinutes(12 * 60, 5)).toBe(17);
+    expect(stepMatchMinutes(12 * 60, -5)).toBe(7);
+  });
+
+  it("arredonda os segundos do relógio", () => {
+    // 11:40 na tela são 12 minutos para quem está olhando.
+    expect(stepMatchMinutes(11 * 60 + 40, 1)).toBe(13);
+  });
+
+  it("-5 com 2 minutos no relógio não pede tempo negativo", () => {
+    expect(stepMatchMinutes(2 * 60, -5)).toBe(0);
+  });
+
+  it("não passa do teto que o banco aceita", () => {
+    expect(stepMatchMinutes(239 * 60, 5)).toBe(LIMITS.matchRemainingMinutes.max);
   });
 });

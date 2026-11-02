@@ -141,6 +141,43 @@ Vale medir no piloto: se a fila de uma quadra movimentada acumular
 grupos fantasmas, o caminho mais provável é uma confirmação leve a cada
 N rodadas — e não a cada turno.
 
+## O admin ajusta o relógio do turno
+
+O relógio da quadra é o do banco e começa quando o turno começa. Na
+quadra real isso sai errado de vez em quando: o grupo entrou cinco
+minutos antes de alguém marcar, a troca demorou mais que o minuto, o
+anfitrião marcou "entraram" com o grupo ainda juntando as raquetes.
+Antes, não havia o que fazer — ou se esperava um turno errado até o fim,
+ou se devolvia a quadra e a fila andava cedo.
+
+Com o turno em andamento, quem entra com a **conta de administrador** vê
+na tela da quadra um bloco `ADMIN · TEMPO DO TURNO` com o que falta e os
+passos de −5, −1, +1 e +5 minutos, além de **Encerrar o turno agora**.
+
+```sql
+-- "faltam 12 minutos neste turno"
+select public.admin_set_match_time('<match_id>', 12);
+```
+
+Três decisões:
+
+- **O contrato é o total, não o passo.** A RPC recebe "faltam N
+  minutos", de 0 a 240. Dois administradores mexendo ao mesmo tempo não
+  somam ajustes sem perceber, e repetir a chamada não muda nada. Os
+  botões de ±5 mandam o total já calculado.
+- **Zero encerra agora**, e a quadra anda como em qualquer fim de tempo:
+  1 minuto de troca, o próximo entra sozinho, quem jogava vai para o fim
+  da fila.
+- **O ajuste é público.** `matches.time_adjusted_at`,
+  `time_adjusted_by` e `time_adjusted_seconds` ficam gravados, e a tela
+  de todo mundo mostra *"o tempo deste turno foi ajustado pela
+  organização da quadra"*. Um relógio que pula sem explicação parece app
+  quebrado — e quem está em quadra merece saber que foi uma correção.
+
+Só `admin` (`NQ023` para qualquer outra pessoa). Se um dia a operação do
+parque (`staff`) precisar disso, é trocar `require_admin()` por uma
+checagem de `is_staff()`.
+
 ## Como ficou no código
 
 | Onde | O que |
@@ -156,3 +193,6 @@ N rodadas — e não a cada turno.
 | `web/src/screens/Court.tsx` | o cartão da troca e a contagem |
 | `tests/local/80_rotacao_test.sql` | a rotação ponta a ponta |
 | `web/src/screens/__tests__/court-troca.test.tsx` | a tela na troca |
+| `supabase/migrations/20261102130000_admin_ajusta_o_tempo.sql` | o ajuste de relógio |
+| `admin_set_match_time(match_id, minutos)` | quanto falta, dito pelo admin |
+| `stepMatchMinutes()` em `web/src/lib/limits.ts` | o passo dos botões, preso na faixa |

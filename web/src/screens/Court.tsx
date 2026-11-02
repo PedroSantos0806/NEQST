@@ -11,7 +11,9 @@ import { ChevronLeft, Check, Clock, Pin, Players, QrIcon, ScanFrame, SurfaceIcon
 import { ScanOverlay } from "./ScanOverlay";
 import { JoinSheet, type JoinOutcome } from "./JoinSheet";
 import { AskForQr, HostOpenSheet, HostPanel, InviteQr } from "./Host";
-import { cancelJoinRequest, checkIn, confirmAtCourt, decideJoinRequest, finishTurn, leaveQueue, nudgeCourt } from "../lib/api";
+import { cancelJoinRequest, checkIn, confirmAtCourt, decideJoinRequest, finishTurn, leaveQueue, nudgeCourt, setMatchTime } from "../lib/api";
+import { me } from "../lib/me";
+import { stepMatchMinutes } from "../lib/limits";
 import { LocationError } from "../lib/geo";
 import type { CourtScreen, MyGroup, MyJoinRequest, Player, QueueItem, ScanResult } from "../lib/types";
 
@@ -33,6 +35,7 @@ export function Court() {
   const [flow, setFlow] = useState<Flow>({ kind: "none" });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const calledFor = useRef<string | null>(null);
   const nudgedFor = useRef<string | null>(null);
   const timers = useRef<number[]>([]);
@@ -58,6 +61,16 @@ export function Court() {
   }, [data]);
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  // O controle de relógio é só de quem administra. `me()` tem cache de
+  // sessão, então isto não é uma ida ao servidor por quadra aberta.
+  useEffect(() => {
+    let alive = true;
+    void me()
+      .then((profile) => { if (alive) setIsAdmin(profile.profile?.role === "admin"); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
 
   /**
    * A troca acabou e o turno do próximo precisa começar.
@@ -352,6 +365,68 @@ export function Court() {
         {notice && (
           <p role="status" style={{ margin: 0, padding: "10px 12px", borderRadius: 8, fontSize: 13, background: "rgba(116,182,157,.18)", color: "var(--green)" }}>
             {notice}
+          </p>
+        )}
+
+        {/*
+          O relógio da quadra erra de vez em quando: o grupo entrou
+          antes de alguém marcar, a troca demorou. Quem administra
+          corrige quanto falta — e o ajuste aparece para todo mundo,
+          porque um relógio que pula sem explicação parece app quebrado.
+        */}
+        {isAdmin && live && match && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "var(--green)" }}>
+                ADMIN · TEMPO DO TURNO
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+                faltam {Math.max(0, Math.round(remaining / 60))} min
+              </span>
+            </div>
+
+            <div style={{ display: "flex", gap: 6 }}>
+              {[-5, -1, 1, 5].map((step) => (
+                <button
+                  key={step}
+                  type="button"
+                  className="press"
+                  disabled={busy}
+                  onClick={() => void act(
+                    () => setMatchTime(match.match_id, stepMatchMinutes(remaining, step)),
+                    "Tempo ajustado.",
+                  )}
+                  style={{ flex: 1, minHeight: 44, background: "transparent", color: "var(--green)", border: "1.5px solid var(--green)", borderRadius: 8, fontSize: 14, fontWeight: 800 }}
+                >
+                  {step > 0 ? `+${step}` : step}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              className="press"
+              disabled={busy}
+              onClick={() => void act(
+                () => setMatchTime(match.match_id, 0),
+                "Turno encerrado — a quadra entrou na troca.",
+              )}
+              style={{ minHeight: 44, background: "transparent", color: "var(--rust)", border: "1.5px solid var(--rust)", borderRadius: 8, fontSize: 13, fontWeight: 700 }}
+            >
+              Encerrar o turno agora
+            </button>
+
+            <span style={{ fontSize: 12, lineHeight: 1.4, color: "var(--green)" }}>
+              Encerrar aqui faz a quadra andar como no fim do tempo: 1 minuto de troca,
+              o próximo entra e este grupo vai para o fim da fila.
+            </span>
+          </div>
+        )}
+
+        {/* O ajuste é público: quem está em quadra precisa saber por que o relógio mudou. */}
+        {live && match?.time_adjusted_at && (
+          <p style={{ margin: 0, padding: "8px 12px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.4, background: "rgba(196,144,81,.18)", color: "var(--green)" }}>
+            O tempo deste turno foi ajustado pela organização da quadra.
           </p>
         )}
 

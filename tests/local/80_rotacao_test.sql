@@ -23,7 +23,10 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('d6000000-0000-0000-0000-0000000000d6', 'r-duda@example.com', '{"full_name":"Duda Sozinha"}'),
   ('e6000000-0000-0000-0000-0000000000e6', 'r-edu@example.com',  '{"full_name":"Edu Apressado"}'),
   ('f6000000-0000-0000-0000-0000000000f6', 'r-fe@example.com',   '{"full_name":"Fê Rotação"}'),
-  ('96000000-0000-0000-0000-000000000096', 'r-gabi@example.com', '{"full_name":"Gabi Atrás"}');
+  ('96000000-0000-0000-0000-000000000096', 'r-gabi@example.com', '{"full_name":"Gabi Atrás"}'),
+  ('16000000-0000-0000-0000-000000000016', 'r-admin@example.com', '{"full_name":"Admin Quadra"}');
+
+update public.profiles set role = 'admin' where id = '16000000-0000-0000-0000-000000000016';
 
 insert into public.parks (id, slug, name, district, latitude, longitude)
 values ('66660000-0000-0000-0000-000000000006', 'teste-rotacao', 'Parque da Rotação (teste)',
@@ -476,6 +479,109 @@ begin
   assert (v_res ->> 'entries_expired')::integer = 1, format('a vez passou: %s', v_res);
   assert (select status from public.queue_entries where id = v_duda.id) = 'expired',
     'quem não apareceu perdeu a vez';
+end $$;
+
+-- =====================================================================
+-- 11. O admin corrige o relógio do turno em andamento
+--
+-- O grupo entrou cinco minutos antes de alguém marcar, ou a troca
+-- demorou: quem administra diz quanto falta de verdade.
+-- =====================================================================
+do $$
+declare
+  v_match public.matches;
+  v_code  text;
+  v_tela  jsonb;
+begin
+  -- A q3 tem a Fê em quadra e o Edu na fila (caso 9).
+  select * into v_match from public.matches mt
+  where mt.court_id = pg_temp.q3() and mt.ended_at is null;
+  assert v_match.id is not null, 'tem turno em andamento na q3';
+
+  -- Jogador comum não mexe no relógio de ninguém.
+  perform pg_temp.as_user('e6000000-0000-0000-0000-0000000000e6');
+  begin
+    perform public.admin_set_match_time(v_match.id, 10);
+    assert false, 'jogador comum não ajusta o tempo';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ023', format('esperava NQ023, obtive %s', v_code);
+  end;
+
+  perform pg_temp.as_user('16000000-0000-0000-0000-000000000016');
+
+  -- Fora da faixa, não.
+  begin
+    perform public.admin_set_match_time(v_match.id, 999);
+    assert false, '999 minutos deveria ser recusado';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ036', format('esperava NQ036, obtive %s', v_code);
+  end;
+
+  -- "Faltam 12 minutos."
+  v_tela := public.admin_set_match_time(v_match.id, 12);
+  assert (v_tela ->> 'is_live')::boolean, 'o turno continua'
+    ;
+  assert (v_tela -> 'match' ->> 'remaining_seconds')::integer between 700 and 720,
+    format('faltam ~12 min: %s', v_tela -> 'match' ->> 'remaining_seconds');
+  assert (v_tela -> 'match' ->> 'time_adjusted_at') is not null,
+    'o ajuste fica visível na tela de todo mundo';
+
+  -- O contrato é o total, não o passo: repetir não acumula.
+  v_tela := public.admin_set_match_time(v_match.id, 12);
+  assert (v_tela -> 'match' ->> 'remaining_seconds')::integer between 700 and 720,
+    format('repetir não soma: %s', v_tela -> 'match' ->> 'remaining_seconds');
+
+  -- E quem ajustou fica gravado.
+  select * into v_match from public.matches mt where mt.id = v_match.id;
+  assert v_match.time_adjusted_by = '16000000-0000-0000-0000-000000000016',
+    'quem mexeu no relógio fica registrado';
+  assert v_match.time_adjusted_seconds <> 0, 'o quanto também';
+end $$;
+
+-- Zerar o tempo encerra o turno agora, e a quadra roda como sempre
+do $$
+declare
+  v_match uuid;
+  v_tela  jsonb;
+begin
+  select mt.id into v_match from public.matches mt
+  where mt.court_id = pg_temp.q3() and mt.ended_at is null;
+
+  perform pg_temp.as_user('16000000-0000-0000-0000-000000000016');
+  v_tela := public.admin_set_match_time(v_match, 0);
+
+  assert not (v_tela ->> 'is_live')::boolean, 'o turno encerrou na hora';
+  assert (v_tela ->> 'is_changeover')::boolean,
+    format('a quadra entrou na troca: %s', v_tela ->> 'status_text');
+  assert (select end_reason from public.matches where id = v_match) = 'slot_expired',
+    'encerrou como fim de tempo';
+
+  -- A Fê foi para o fim e o Edu entra quando a troca acabar.
+  assert pg_temp.ordem(pg_temp.q3()) = 'Edu,Fê', format('fila: %s', pg_temp.ordem(pg_temp.q3()));
+  perform pg_temp.acaba_a_troca(pg_temp.q3());
+  perform public.advance_expired_queues();
+  assert pg_temp.em_quadra(pg_temp.q3()) = 'Edu',
+    format('em quadra: %s', pg_temp.em_quadra(pg_temp.q3()));
+end $$;
+
+-- Turno já encerrado não se ajusta
+do $$
+declare v_match uuid; v_code text;
+begin
+  select mt.id into v_match from public.matches mt
+  where mt.court_id = pg_temp.q3() and mt.ended_at is not null
+  order by mt.ended_at desc limit 1;
+
+  perform pg_temp.as_user('16000000-0000-0000-0000-000000000016');
+  begin
+    perform public.admin_set_match_time(v_match, 20);
+    assert false, 'turno encerrado não volta';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ009', format('esperava NQ009, obtive %s', v_code);
+  end;
 end $$;
 
 rollback;
