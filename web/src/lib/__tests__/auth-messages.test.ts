@@ -20,6 +20,16 @@ describe("authMessage", () => {
     expect(erro("over_email_send_rate_limit")).toMatch(/Google/);
   });
 
+  it("conta pendente oferece saída que não depende do e-mail", () => {
+    // Com a confirmação desligada no painel, quem se cadastrou antes
+    // fica pendente e o e-mail dele pode nunca ter saído. Repetir
+    // "confirme no e-mail" seria mandar a pessoa esperar algo que não
+    // vem.
+    const texto = erro("Email not confirmed");
+    expect(texto).toMatch(/Google/);
+    expect(texto).toMatch(/administrador/);
+  });
+
   it("senha curta cita o mínimo que o servidor exige", () => {
     expect(erro("Password should be at least 6 characters")).toMatch(/6/);
   });
