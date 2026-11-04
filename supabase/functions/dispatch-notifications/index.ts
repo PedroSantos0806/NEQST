@@ -69,12 +69,18 @@ serve(async (req) => {
   // Duas execuções sobrepostas pegavam as MESMAS linhas e mandavam o
   // mesmo "É a sua vez!" duas vezes. `claim_notifications` usa
   // `for update skip locked`, então cada worker leva um lote diferente.
-  const { data: pending, error: pendingError } = await admin
-    .rpc("claim_notifications", { p_limit: MAX_BATCH, p_max_attempts: MAX_ATTEMPTS })
-    .returns<OutboxRow[]>();
+  const claim = { p_limit: MAX_BATCH, p_max_attempts: MAX_ATTEMPTS };
+  const { data: claimed, error: pendingError } = await admin.rpc("claim_notifications", claim);
 
   if (pendingError) throw new ApiError("DATABASE_ERROR", pendingError.message, 500);
-  if (!pending || pending.length === 0) {
+
+  // Sem `.returns<OutboxRow[]>()` aqui: numa RPC o postgrest-js enxerga
+  // o retorno como objeto único e recusa o molde de array em tempo de
+  // tipo ("Cannot cast single object to array type"). Como
+  // `claim_notifications` devolve `setof`, a garantia fica no valor.
+  const pending = (Array.isArray(claimed) ? claimed : []) as OutboxRow[];
+
+  if (pending.length === 0) {
     return json({ processed: 0, sent: 0, failed: 0 });
   }
 
@@ -256,7 +262,10 @@ serve(async (req) => {
   // resposta, porque é ela que explica o push duplicado de amanhã.
   const writeErrors: string[] = [];
 
-  async function write(what: string, run: Promise<{ error: unknown }>): Promise<void> {
+  // `PromiseLike`, não `Promise`: o builder do postgrest é awaitable mas
+  // não tem `catch`/`finally`, então exigir `Promise` aqui rejeitava
+  // todas as cinco chamadas na checagem de tipos.
+  async function write(what: string, run: PromiseLike<{ error: unknown }>): Promise<void> {
     const { error } = await run;
     if (error) {
       console.error(`outbox_write_failed: ${what}`, error);
