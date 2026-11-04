@@ -141,6 +141,12 @@ Vale medir no piloto: se a fila de uma quadra movimentada acumular
 grupos fantasmas, o caminho mais provável é uma confirmação leve a cada
 N rodadas — e não a cada turno.
 
+> **A [Sprint 7](sprint7.md) atacou isto por dois lados.** Numa quadra
+> com tablet, o grupo que foi embora não aperta JOGAR quando é chamado,
+> então desce a fila a cada rodada em vez de ocupar a quadra. E a conta
+> de administrador passou a ter um **×** em cada grupo da fila, para
+> limpar de vez.
+
 ## O admin ajusta o relógio do turno
 
 O relógio da quadra é o do banco e começa quando o turno começa. Na

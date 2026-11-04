@@ -11,8 +11,8 @@ import { ChevronLeft, Check, Clock, Pin, Players, QrIcon, ScanFrame, SurfaceIcon
 import { ScanOverlay } from "./ScanOverlay";
 import { JoinSheet, type JoinOutcome } from "./JoinSheet";
 import { AskForQr, HostOpenSheet, HostPanel, InviteQr } from "./Host";
-import { cancelJoinRequest, checkIn, confirmAtCourt, decideJoinRequest, finishTurn, leaveQueue, nudgeCourt, setMatchTime } from "../lib/api";
-import { me } from "../lib/me";
+import { acceptTurn, cancelJoinRequest, checkIn, confirmAtCourt, decideJoinRequest, finishTurn, leaveQueue, nudgeCourt, setMatchTime } from "../lib/api";
+import { useMe } from "../hooks/useMe";
 import { stepMatchMinutes } from "../lib/limits";
 import { LocationError } from "../lib/geo";
 import type { CourtScreen, MyGroup, MyJoinRequest, Player, QueueItem, ScanResult } from "../lib/types";
@@ -35,12 +35,12 @@ export function Court() {
   const [flow, setFlow] = useState<Flow>({ kind: "none" });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const isAdmin = useMe()?.profile?.role === "admin";
   const calledFor = useRef<string | null>(null);
   const nudgedFor = useRef<string | null>(null);
   const timers = useRef<number[]>([]);
 
-  useTicker(Boolean(data?.is_live || data?.my_entry?.is_called || data?.is_changeover));
+  useTicker(Boolean(data?.is_live || data?.my_entry?.is_called || data?.is_handover));
 
   // A barra inferior precisa saber onde o jogador está.
   useEffect(() => {
@@ -62,16 +62,6 @@ export function Court() {
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  // O controle de relógio é só de quem administra. `me()` tem cache de
-  // sessão, então isto não é uma ida ao servidor por quadra aberta.
-  useEffect(() => {
-    let alive = true;
-    void me()
-      .then((profile) => { if (alive) setIsAdmin(profile.profile?.role === "admin"); })
-      .catch(() => undefined);
-    return () => { alive = false; };
-  }, []);
-
   /**
    * A troca acabou e o turno do próximo precisa começar.
    *
@@ -79,11 +69,11 @@ export function Court() {
    * contagem zerar na tela e nada acontecer por até um minuto. Quem
    * está com a quadra aberta avisa o banco na hora — e o banco só
    * executa o que já estava vencido, então isso não pula a vez de
-   * ninguém. Uma vez por troca.
+   * ninguém. Uma vez por prazo.
    */
   useEffect(() => {
-    const change = data?.changeover;
-    if (!data?.is_changeover || !change || !courtId) return;
+    const change = data?.handover;
+    if (!data?.is_handover || !change || !courtId) return;
     if (nudgedFor.current === change.until) return;
 
     const wait = Math.max(0, new Date(change.until).getTime() - Date.now());
@@ -149,13 +139,16 @@ export function Court() {
     ? Math.max(0, Math.floor((new Date(match.expires_at).getTime() - now) / 1000))
     : 0;
 
-  // A troca de quadra: o minuto entre dois turnos. Contado a partir do
-  // horário que o servidor mandou, não do número que ele mandou — a
+  // A troca de turno, nas três formas dela: a quadra chamando (15 s), o
+  // grupo entrando (30 s) e a troca automática das quadras sem tablet.
+  // Contada a partir do horário que o servidor mandou, não do número: a
   // tela fica aberta e o relógio precisa andar entre dois refetches.
-  const changeover = data.changeover ?? null;
-  const trading = Boolean(data.is_changeover && changeover);
-  const changeLeft = changeover
-    ? Math.max(0, Math.floor((new Date(changeover.until).getTime() - now) / 1000))
+  const handover = data.handover ?? null;
+  const trading = Boolean(data.is_handover && handover);
+  const calling = trading && handover?.phase === "calling";
+  const entering = trading && handover?.phase === "entering";
+  const changeLeft = handover
+    ? Math.max(0, Math.floor((new Date(handover.until).getTime() - now) / 1000))
     : 0;
 
   const playingHere = group?.status === "playing";
@@ -174,6 +167,20 @@ export function Court() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Administração: tirar um grupo da fila.
+   *
+   * O caso real é o grupo que foi embora sem sair da fila — sem isso
+   * ele volta a ocupar a quadra a cada rodada e ninguém de fora entende
+   * por quê. Pergunta antes porque é a vez de outra pessoa que está
+   * sendo apagada.
+   */
+  function onRemoveFromQueue(item: QueueItem) {
+    const who = item.team_label ?? "este grupo";
+    if (!window.confirm(`Tirar ${who} da fila da ${court.name}?`)) return;
+    void act(() => leaveQueue(item.entry_id, "removido_pelo_admin"), `${who} saiu da fila.`);
   }
 
   function onLeave() {
@@ -311,7 +318,8 @@ export function Court() {
               : trading
                 ? (
                   <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "var(--ocre)", color: "var(--ink)", borderRadius: 6, fontSize: 11, fontWeight: 800, letterSpacing: ".1em" }}>
-                    <span className="dot" />TROCA DE GRUPO
+                    <span className="dot" />
+                    {calling ? "CHAMANDO" : entering ? "ENTRANDO" : "TROCA DE GRUPO"}
                   </span>
                 )
                 : (
@@ -332,9 +340,13 @@ export function Court() {
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", opacity: 0.92 }}>
               {live
                 ? `Tempo de quadra · turno de ${court.slot_minutes} min`
-                : trading
-                  ? "Troca de grupo · o próximo entra sozinho"
-                  : "Aguardando check-in"}
+                : calling
+                  ? "Chamando o próximo · alguém do grupo precisa aceitar"
+                  : entering
+                    ? "Entrando na quadra · o tempo começa quando zerar"
+                    : trading
+                      ? "Troca de grupo · o próximo entra sozinho"
+                      : "Aguardando o primeiro grupo"}
             </span>
           </div>
 
@@ -342,22 +354,26 @@ export function Court() {
             players={live ? match?.players ?? [] : []}
             empty={live
               ? match?.is_offline ? match.offline_label ?? "Grupo sem app" : "Grupo em quadra"
-              : trading
-                ? `Entrando: ${changeover?.next_label ?? "o próximo da fila"}`
-                : "Sem jogo em andamento"}
+              : calling
+                ? `Chamando: ${handover?.label ?? "o próximo da fila"}`
+                : trading
+                  ? `Entrando: ${handover?.label ?? "o próximo da fila"}`
+                  : "Sem jogo em andamento"}
           />
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 9px", background: "rgba(10,14,11,.28)", borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
               <Players size={14} />
-              {live ? match?.group_label : trading ? "Entrando em quadra" : "Sem grupo em quadra"}
+              {live ? match?.group_label : calling ? "Chamando o próximo" : trading ? "Entrando em quadra" : "Sem grupo em quadra"}
             </span>
             <span style={{ fontSize: 12, fontWeight: 600 }}>
               {live
                 ? `Faltam ~${Math.max(1, Math.ceil(remaining / 60))} min`
-                : trading
-                  ? "O turno começa quando zerar"
-                  : "Pronta para jogar"}
+                : calling
+                  ? `A vez passa em ${mmss(changeLeft)}`
+                  : trading
+                    ? "O turno começa quando zerar"
+                    : "Pronta para jogar"}
             </span>
           </div>
         </div>
@@ -522,12 +538,69 @@ export function Court() {
         )}
 
         {/*
-          A troca de grupo, para quem entra agora. É o cartão que diz a
-          coisa mais importante da mudança: não há nada a fazer. O botão
-          existe só para quem já está na quadra e não quer esperar o
-          contador — a vez não se perde se ninguém tocar nele.
+          A chamada do turno, para quem está sendo chamado agora.
+
+          É o cartão mais importante da tela: o tablet está gritando o
+          nome do grupo e alguém tem 15 segundos para responder. UMA
+          pessoa basta — e é isso que o texto precisa dizer, senão cada
+          um fica esperando que o outro aperte.
         */}
-        {trading && changeover?.next_is_mine && (
+        {calling && handover?.is_mine && (
+          <div className="flash" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em" }}>
+                  CHAMANDO O SEU GRUPO
+                </span>
+                <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>É a vez de vocês</span>
+              </span>
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                <span className="bb" role="timer" style={{ fontSize: 40, lineHeight: 1 }}>{mmss(changeLeft)}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em" }}>PARA ACEITAR</span>
+              </span>
+            </div>
+            <span style={{ fontSize: 13, lineHeight: 1.4 }}>
+              Basta <strong>uma pessoa</strong> do grupo apertar — vale para todos.
+              Se ninguém apertar, a vez passa para o próximo e vocês voltam para o fim da fila.
+            </span>
+            <button
+              type="button"
+              className="press"
+              disabled={busy}
+              onClick={() => void act(() => acceptTurn(court.id), "Vez aceita! Entrem na quadra.")}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 64, background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 22, fontWeight: 900, letterSpacing: ".04em" }}
+            >
+              JOGAR
+            </button>
+          </div>
+        )}
+
+        {/* Aceitaram: agora é só entrar. O relógio de jogo começa no fim. */}
+        {entering && handover?.is_mine && (
+          <div className="flash" style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--ocre)", borderRadius: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "var(--ocre)" }}>
+                  VEZ ACEITA · ENTREM NA QUADRA
+                </span>
+                <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>Seu tempo começa agora</span>
+              </span>
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                <span className="bb" role="timer" style={{ fontSize: 34, lineHeight: 1 }}>{mmss(changeLeft)}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>PARA ENTRAR</span>
+              </span>
+            </div>
+            <span style={{ fontSize: 13, lineHeight: 1.4 }}>
+              Quando zerar, o tempo de quadra do seu grupo começa a contar — esteja na quadra.
+            </span>
+          </div>
+        )}
+
+        {/*
+          Quadra sem tablet: a troca automática da Sprint 6. Aqui não há
+          nada a fazer, e é isso que o cartão diz.
+        */}
+        {trading && !calling && !entering && handover?.is_mine && (
           <div className="flash" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--ocre)", borderRadius: 12 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -549,12 +622,23 @@ export function Court() {
               type="button"
               className="press"
               disabled={busy}
-              onClick={() => void startCheckIn()}
+              onClick={() => void act(() => acceptTurn(court.id), "Turno começado.")}
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 48, background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 10, fontSize: 14, fontWeight: 700 }}
             >
-              {hostMode ? <Pin size={18} /> : <ScanFrame size={18} />}
               Já estamos em quadra · começar agora
             </button>
+          </div>
+        )}
+
+        {/* A chamada é de outro grupo: quem olha só acompanha. */}
+        {(calling || entering) && !handover?.is_mine && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10, fontSize: 13, lineHeight: 1.35 }}>
+            <span className="bb" role="timer" style={{ fontSize: 26, minWidth: 64, color: "var(--green)" }}>{mmss(changeLeft)}</span>
+            <span>
+              {calling
+                ? <>A quadra está chamando <strong>{handover?.label ?? "o próximo grupo"}</strong>. Se ninguém do grupo aceitar, a vez passa para o seguinte.</>
+                : <>{handover?.label ?? "O próximo grupo"} aceitou e está entrando na quadra.</>}
+            </span>
           </div>
         )}
 
@@ -722,7 +806,14 @@ export function Court() {
           )
           : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {data.queue.map((item) => <QueueRow key={item.entry_id} item={item} />)}
+              {data.queue.map((item) => (
+                <QueueRow
+                  key={item.entry_id}
+                  item={item}
+                  onRemove={isAdmin ? () => onRemoveFromQueue(item) : undefined}
+                  busy={busy}
+                />
+              ))}
             </div>
           )}
       </div>
@@ -936,7 +1027,16 @@ function PendingRequest({
   );
 }
 
-function QueueRow({ item }: { item: QueueItem }) {
+function QueueRow({
+  item,
+  onRemove,
+  busy,
+}: {
+  item: QueueItem;
+  /** Só para quem administra: tirar da fila quem foi embora sem avisar. */
+  onRemove?: () => void;
+  busy?: boolean;
+}) {
   const players = item.is_offline
     ? "Sem o app no celular"
     : item.players.map((player) => player.full_name ?? player.short_name).join(" · ");
@@ -993,6 +1093,27 @@ function QueueRow({ item }: { item: QueueItem }) {
         face={item.is_mine ? "#0A0E0B" : "#2F4629"}
         highlightLast={item.is_mine}
       />
+
+      {onRemove && (
+        <button
+          type="button"
+          className="press"
+          disabled={busy}
+          onClick={onRemove}
+          aria-label={`Remover ${item.team_label ?? "este grupo"} da fila`}
+          title="Remover da fila"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 40, minHeight: 40, flexShrink: 0,
+            background: "transparent",
+            color: item.is_mine ? "var(--chalk)" : "var(--rust)",
+            border: `1.5px solid ${item.is_mine ? "rgba(241,236,239,.6)" : "var(--rust)"}`,
+            borderRadius: 8, fontSize: 18, fontWeight: 800, lineHeight: 1,
+          }}
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }

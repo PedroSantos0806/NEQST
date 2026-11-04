@@ -380,9 +380,11 @@ begin
   assert (select qp.position from public.queue_positions qp where qp.entry_id = v_bruno.id) = 2,
     'o Bruno entra atrás do Caio';
 
-  assert (select changeover_until from public.courts
-          where id = 'aaaa0000-0000-0000-0000-00000000000a') > now(),
-    'a quadra está na troca de 1 minuto';
+  -- Esta quadra não tem tablet: a troca de turno é a automática da
+  -- Sprint 6, e não a chamada de 15 s do tablet (ver 80_rotacao_test).
+  assert (select handover_phase from public.courts
+          where id = 'aaaa0000-0000-0000-0000-00000000000a') = 'changeover',
+    'a quadra entrou na troca automática';
 end $$;
 
 -- O Elias chega durante a troca: 3º, atrás do Bruno que voltou
@@ -396,11 +398,11 @@ begin
   assert (v ->> 'position')::int = 3, format('Elias é o 3º: %s', v);
 end $$;
 
--- Acabou o minuto: o turno do Caio começa sem ninguém fazer nada
+-- Acabou a troca: o turno do Caio começa sem ninguém fazer nada
 do $$
 declare v jsonb;
 begin
-  update public.courts set changeover_until = now() - interval '1 second'
+  update public.courts set handover_until = now() - interval '1 second'
   where id = 'aaaa0000-0000-0000-0000-00000000000a';
 
   v := public.advance_expired_queues();
@@ -427,9 +429,9 @@ begin
   v := public.finish_my_turn(v_match);
   assert v ->> 'end_reason' = 'finished_by_group', format('devolveu a quadra: %s', v);
 
-  assert (select changeover_until from public.courts
+  assert (select handover_phase from public.courts
           where id = 'aaaa0000-0000-0000-0000-00000000000a') is null,
-    'devolver a quadra antes da hora não abre troca';
+    'devolver a quadra antes da hora não abre chamada';
 
   select e.* into v_bruno from public.queue_entries e
   where e.created_by = 'b0000000-0000-0000-0000-00000000000b' and e.status in ('waiting', 'ready');
@@ -496,7 +498,7 @@ begin
   assert v -> 'park' ->> 'district' = 'Vila Mariana · Zona Sul', 'distrito do parque';
   assert not (v ->> 'is_live')::boolean, 'quadra livre agora';
   assert v ->> 'status_text' = 'Livre', 'texto de status';
-  assert v ->> 'players_line' = 'Sem jogo agora — check-in libera a quadra',
+  assert v ->> 'players_line' = 'Sem jogo agora — aperte JOGAR para começar',
     format('linha de jogadores: %s', v ->> 'players_line');
 
   -- O Elias segue na fila
@@ -669,8 +671,8 @@ begin
   v := public.court_screen('cccc0000-0000-0000-0000-00000000000c');
   assert (v -> 'court' ->> 'slot_minutes')::int = 60, 'slot próprio da quadra';
   assert v -> 'court' ->> 'surface_label' = 'Grama', 'grama';
-  -- Uma rodada da quadra custa o slot MAIS a troca de 1 min: quem entrar
-  -- agora espera o time da frente jogar 60 min e a quadra trocar.
+  -- Sem tablet, uma rodada custa o slot MAIS a troca automática (1 min).
+  assert not (v -> 'court' ->> 'has_tablet')::boolean, 'esta quadra não tem tablet';
   assert (v ->> 'turn_seconds')::int = 3660, format('rodada: %s', v ->> 'turn_seconds');
   assert (v ->> 'total_wait_seconds')::int = 3660,
     format('1 time x (60 min + troca): %s', v ->> 'total_wait_seconds');

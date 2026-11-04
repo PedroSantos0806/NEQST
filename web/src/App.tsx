@@ -19,6 +19,12 @@ const Admin = lazy(() =>
   import("./screens/Admin").then((module) => ({ default: module.Admin })),
 );
 
+// A tela do tablet não interessa a quem está com o celular na mão, e
+// carrega o motor de som: fica fora do bundle de quem só quer jogar.
+const Tablet = lazy(() =>
+  import("./screens/Tablet").then((module) => ({ default: module.Tablet })),
+);
+
 /** Parâmetros que pertencem ao fluxo de login, não à rota. */
 const AUTH_PARAMS = ["code", "error", "error_code", "error_description", "state", "type"];
 
@@ -80,6 +86,20 @@ export function App() {
       {/* O QR impresso aponta para cá; o da tela de quem está na fila, para /q/h */}
       <Route path="/q/:courtId" element={<ScanLanding />} />
       <Route path="/q/h/:code" element={<ScanLanding />} />
+
+      {/*
+        O tablet da quadra. Sem Protected de propósito: a credencial é o
+        token do link, não uma conta — um aparelho que fica num parque
+        público não pode carregar a sessão de ninguém.
+      */}
+      <Route
+        path="/tablet/:token"
+        element={
+          <Suspense fallback={<Loading what="Carregando a quadra" />}>
+            <Tablet />
+          </Suspense>
+        }
+      />
 
       <Route path="/" element={<Protected><Parks /></Protected>} />
       <Route path="/parque/:parkId" element={<Protected><Park /></Protected>} />

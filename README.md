@@ -23,6 +23,10 @@ Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
   há 1 minuto de troca, o turno do próximo começa sem check-in e quem
   jogou volta para o fim da fila. Quem está na fila só precisa entrar
   quando chega e sair quando vai embora.
+- [Sprint 7](docs/sprint7.md) — a chamada no tablet, com som: um
+  aparelho parado na quadra chama os próximos pelo nome por 15 s, uma
+  pessoa aperta JOGAR, o grupo tem 30 s para entrar e o turno começa.
+  Sem tablet aceso, a quadra volta à troca automática da Sprint 6.
 
 O que difere entre web e app (push, QR Code, CORS, login) está em
 [docs/plataformas.md](docs/plataformas.md).
@@ -206,6 +210,11 @@ administração ([`docs/sprint5.md`](docs/sprint5.md)).
 turno seguinte começando sozinho, o grupo que jogou voltando para o fim
 da fila com o mesmo PIN, e a espera estimada contando a troca
 ([`docs/sprint6.md`](docs/sprint6.md)).
+
+**Sprint 7:** a chamada no tablet — o aparelho da quadra com identidade
+própria (sem conta de ninguém), chamada de 15 s descendo a fila, JOGAR
+de uma pessoa só, 30 s para entrar, som e fala pelo navegador, e o admin
+tirando da fila quem foi embora ([`docs/sprint7.md`](docs/sprint7.md)).
 
 Sugestões que ficaram registradas para depois, em
 [`docs/sprint2.md`](docs/sprint2.md#o-que-não-entrou): rate limiting no

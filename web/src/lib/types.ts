@@ -82,6 +82,8 @@ export interface QueueItem {
   eta_seconds: number;
   /** Quantos turnos este grupo já tem na sequência: 2 ou mais = já jogou e voltou para o fim. */
   turn_number?: number;
+  /** É este grupo que a quadra está chamando agora. */
+  is_being_called?: boolean;
   /** Vaga de quem está na fila sem o app; só quem organiza a fila mexe nela. */
   is_offline?: boolean;
   offline_label?: string | null;
@@ -98,8 +100,14 @@ export interface CourtScreen {
     is_active: boolean;
     slot_minutes: number;
     call_window_seconds: number;
-    /** O minuto de troca entre um turno e o próximo. */
+    /** Quanto a quadra chama um grupo antes de passar para o seguinte. */
+    handover_call_seconds: number;
+    /** Depois do JOGAR, quanto tempo o grupo tem para entrar. */
+    handover_entry_seconds: number;
+    /** A troca automática das quadras sem tablet. */
     changeover_seconds: number;
+    /** Há um tablet aceso nesta quadra? É ele que chama os nomes. */
+    has_tablet?: boolean;
     /** "host": piloto sem nada na placa (Sprint 5). */
     queue_mode?: QueueMode;
     checkin_methods: Array<"qr" | "nfc" | "gps">;
@@ -111,9 +119,9 @@ export interface CourtScreen {
   park: { id: string; name: string; district: string | null };
   match: MatchState | null;
   is_live: boolean;
-  /** A quadra está no minuto de troca: sem partida, mas com grupo entrando. */
-  is_changeover?: boolean;
-  changeover?: Changeover | null;
+  /** A quadra está trocando de turno: chamando, entrando, ou na troca automática. */
+  is_handover?: boolean;
+  handover?: Handover | null;
   status_text: string;
   players_line: string;
   queue: QueueItem[];
@@ -138,17 +146,56 @@ export interface CourtScreen {
 
 export type QueueMode = "fixed_qr" | "host";
 
+/** A tela do tablet: a quadra inteira, mais o aparelho que está mostrando. */
+export interface TabletScreen extends CourtScreen {
+  device: { id: string; label: string | null };
+}
+
+/** Um tablet ligado a uma quadra. O token só existe na hora de criar. */
+export interface CourtDevice {
+  device_id: string;
+  court_id: string;
+  court_label: string;
+  park_name: string;
+  label: string | null;
+  created_at: string;
+  last_seen_at: string | null;
+  awake: boolean;
+  revoked_at: string | null;
+}
+
+export interface NewCourtDevice {
+  device_id: string;
+  court_id: string;
+  label: string | null;
+  /** Aparece uma única vez: depois o banco só tem o hash. */
+  token: string;
+  path: string;
+}
+
 /**
- * O minuto entre dois turnos: quem jogou sai, o próximo entra. No fim
- * dele o turno do próximo começa sozinho — ninguém precisa fazer nada.
+ * A troca de turno, nos três jeitos que ela acontece:
+ *
+ *   calling    o tablet está chamando o grupo pelo nome (15s). Alguém
+ *              precisa apertar JOGAR, ou a vez desce para o seguinte.
+ *   entering   aceitaram; são os segundos para entrar na quadra (30s).
+ *   changeover quadra sem tablet: o turno do próximo começa sozinho.
  */
-export interface Changeover {
+export interface Handover {
+  phase: "calling" | "entering" | "changeover";
   until: string;
   seconds_left: number;
-  next_entry_id: string | null;
-  next_label: string | null;
-  next_is_mine: boolean;
+  entry_id: string;
+  label: string | null;
+  /** Os nomes como o tablet fala: "Ana e Bruno". */
+  spoken_names: string;
+  group_size: number;
+  is_mine: boolean;
+  /** Quantas chamadas ainda cabem nesta volta da fila. */
+  calls_left: number;
   text: string;
+  /** Só em `calling`: alguém precisa apertar JOGAR. */
+  needs_accept: boolean;
 }
 
 export interface HostInfo {

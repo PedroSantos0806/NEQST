@@ -17,11 +17,14 @@ import type {
   MyQueueState,
   PaletteColor,
   ParkCard,
+  CourtDevice,
+  NewCourtDevice,
   ParkScreen,
   PilotStats,
   PinResult,
   ProfileSummary,
   ScanResult,
+  TabletScreen,
 } from "./types";
 import { getPosition } from "./geo";
 
@@ -200,6 +203,43 @@ export const checkIn = (scanToken: string) =>
  */
 export const nudgeCourt = (courtId: string) =>
   rpc<CourtScreen>("nudge_court", { p_court_id: courtId });
+
+/**
+ * JOGAR: uma pessoa do grupo chamado aceita a vez.
+ *
+ * Basta uma. Sem chamada aberta e com a quadra livre, começa o turno na
+ * hora — é o mesmo gesto do check-in.
+ */
+export const acceptTurn = (courtId: string) =>
+  rpc<CourtScreen>("accept_turn", { p_court_id: courtId });
+
+// ---------------------------------------------------------------------
+// O tablet da quadra
+//
+// Sem login: o token do aparelho é a credencial, e com ele dá para
+// exatamente duas coisas — ver a quadra e aceitar a vez de quem está
+// sendo chamado.
+// ---------------------------------------------------------------------
+
+export const tabletScreen = (token: string) =>
+  rpc<TabletScreen>("tablet_screen", { p_token: token });
+
+export const tabletAcceptTurn = (token: string) =>
+  rpc<TabletScreen>("tablet_accept_turn", { p_token: token });
+
+export const createCourtDevice = (courtId: string, label?: string | null) =>
+  rpc<NewCourtDevice>("admin_create_court_device", {
+    p_court_id: courtId,
+    p_label: label ?? null,
+  });
+
+export const courtDevices = (courtId?: string | null) =>
+  rpc<CourtDevice[]>("admin_court_devices", { p_court_id: courtId ?? null });
+
+export const revokeCourtDevice = (deviceId: string) =>
+  rpc<{ device_id: string; revoked: boolean }>("admin_revoke_court_device", {
+    p_device_id: deviceId,
+  });
 
 /**
  * Administração: corrigir quanto falta no turno em andamento.

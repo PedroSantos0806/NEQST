@@ -232,6 +232,14 @@ não anda sozinha, que é a regra toda da
 `nudge_court()` quando a contagem zera, para não esperar o tique; o cron
 é a rede de segurança para quando ninguém está olhando.
 
+Sprint 7: a chamada do tablet dura 15 segundos, então o cron de minuto
+em minuto **não é mais o relógio principal** — quem faz a chamada descer
+a fila na hora é o próprio tablet, que fala com o servidor a cada 5 s
+(`tablet_screen`, que por dentro chama `nudge_court`). O cron continua
+sendo a rede de segurança: sem ele, uma quadra que ficou sem tablet e sem
+ninguém com a tela aberta não encerraria o turno vencido
+([Sprint 7](sprint7.md)).
+
 Conferir: `select * from cron.job;` e `select * from cron.job_run_details order by start_time desc limit 20;`
 
 ## 6. Storage das fotos (Sprint 2)
