@@ -7,7 +7,14 @@
  *
  * Body: { entryId: string, reason?: string }
  */
-import { json, postgrestError, readJson, requireMethod, requireUuid, serve } from "../_shared/http.ts";
+import {
+  json,
+  postgrestError,
+  readJson,
+  requireMethod,
+  requireUuid,
+  serve,
+} from "../_shared/http.ts";
 import { requireUser } from "../_shared/supabase.ts";
 
 interface LeaveRequest {

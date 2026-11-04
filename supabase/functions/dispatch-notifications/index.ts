@@ -22,7 +22,12 @@ import {
   isUnregisteredTicket,
   sendExpoPush,
 } from "../_shared/expo.ts";
-import { PushEndpointError, sendWebPush, type VapidKeys, WebPushError } from "../_shared/webpush.ts";
+import {
+  PushEndpointError,
+  sendWebPush,
+  type VapidKeys,
+  WebPushError,
+} from "../_shared/webpush.ts";
 import { serviceClient } from "../_shared/supabase.ts";
 import type { OutboxRow, PushTokenRow } from "../_shared/types.ts";
 
@@ -214,8 +219,10 @@ serve(async (req) => {
               failures.set(row.id, `webpush: ${String(error).slice(0, 200)}`);
               // Endpoint fora da allow-list: linha gravada antes da
               // regra existir. Desativa em vez de tentar para sempre.
-              if (error instanceof WebPushError && error.isGone
-                  || error instanceof PushEndpointError) {
+              if (
+                error instanceof WebPushError && error.isGone ||
+                error instanceof PushEndpointError
+              ) {
                 deadSubscriptions.push(sub.id);
               }
             }),

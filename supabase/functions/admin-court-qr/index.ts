@@ -15,14 +15,7 @@
  * POST /functions/v1/admin-court-qr  { courtId, rotate: true }
  *   Incrementa qr_secret_version, invalidando os códigos antigos.
  */
-import {
-  ApiError,
-  json,
-  readJson,
-  requireEnv,
-  requireUuid,
-  serve,
-} from "../_shared/http.ts";
+import { ApiError, json, readJson, requireEnv, requireUuid, serve } from "../_shared/http.ts";
 import { buildCourtQrPayload, buildCourtQrUrl } from "../_shared/qr.ts";
 import { requireStaff, requireUser, serviceClient } from "../_shared/supabase.ts";
 

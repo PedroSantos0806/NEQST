@@ -215,7 +215,12 @@ export function postgrestError(
     );
   }
 
-  throw new ApiError(mapped.code, error.message ?? "Falha ao executar a operação.", mapped.status, error.details);
+  throw new ApiError(
+    mapped.code,
+    error.message ?? "Falha ao executar a operação.",
+    mapped.status,
+    error.details,
+  );
 }
 
 /**
@@ -236,11 +241,7 @@ export function requireUuid(value: unknown, field: string): string {
 
 /** Vários ids de uma vez, como em ?courtIds=a,b,c. */
 export function requireUuids(values: unknown, field: string, max = 100): string[] {
-  const list = Array.isArray(values)
-    ? values
-    : typeof values === "string"
-    ? values.split(",")
-    : [];
+  const list = Array.isArray(values) ? values : typeof values === "string" ? values.split(",") : [];
 
   if (list.length === 0) {
     throw new ApiError("INVALID_ID", `${field} está vazio.`, 400);
