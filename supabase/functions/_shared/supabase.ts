@@ -26,6 +26,22 @@ export function userClient(req: Request): SupabaseClient {
 }
 
 /**
+ * Cliente anônimo, sem usuário.
+ *
+ * Para as leituras que já são públicas de propósito (o placar, a fila
+ * da quadra). Usar service_role nelas não dava nenhum poder necessário
+ * e fazia qualquer bug futuro na rota operar ignorando RLS — a
+ * auditoria apontou três rotas assim.
+ */
+export function anonClient(): SupabaseClient {
+  return createClient(
+    requireEnv("SUPABASE_URL"),
+    requireEnv("SUPABASE_ANON_KEY"),
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  );
+}
+
+/**
  * Cliente com service_role — ignora RLS.
  * Use apenas onde o backend precisa de privilégio (emitir scan token,
  * despachar push), nunca para repassar dados brutos ao cliente.

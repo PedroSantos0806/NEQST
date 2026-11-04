@@ -20,7 +20,15 @@
  *   -> só as capas, assinadas, para a lista de quadras e o mapa de calor
  *      (evita uma chamada por quadra na tela inicial).
  */
-import { ApiError, json, postgrestError, readJson, serve } from "../_shared/http.ts";
+import {
+  ApiError,
+  json,
+  postgrestError,
+  readJson,
+  requireUuid,
+  requireUuids,
+  serve,
+} from "../_shared/http.ts";
 import { requireUser, serviceClient } from "../_shared/supabase.ts";
 
 const BUCKET = "court-photos";
@@ -67,8 +75,10 @@ serve(async (req) => {
     // Capas de várias quadras de uma vez.
     const courtIds = url.searchParams.get("courtIds");
     if (courtIds) {
-      const ids = courtIds.split(",").map((id) => id.trim()).filter(Boolean).slice(0, 100);
-      if (ids.length === 0) throw new ApiError("COURT_REQUIRED", "Informe courtIds.", 400);
+      // Validado um por um: um id malformado na lista derrubava o lote
+      // inteiro com erro cru do Postgres, e a home ficava sem nenhuma
+      // capa de quadra por causa de um só.
+      const ids = requireUuids(courtIds, "courtIds", 100);
 
       const { data: courts, error } = await admin
         .from("courts")
@@ -97,12 +107,14 @@ serve(async (req) => {
       });
     }
 
-    const courtId = url.searchParams.get("courtId");
-    if (!courtId) throw new ApiError("COURT_REQUIRED", "Informe courtId ou courtIds.", 400);
+    const courtId = requireUuid(url.searchParams.get("courtId"), "courtId");
+    const askedLimit = Number(url.searchParams.get("limit") ?? 20);
 
     const { data, error } = await admin.rpc("court_photos_page", {
       p_court_id: courtId,
-      p_limit: Number(url.searchParams.get("limit") ?? 20),
+      // `Number("abc")` é NaN, e NaN virava null no JSON: a RPC caía no
+      // padrão sem avisar. Melhor um número sempre válido.
+      p_limit: Number.isFinite(askedLimit) ? Math.min(Math.max(askedLimit, 1), 50) : 20,
     });
     if (error) postgrestError(error);
 
@@ -136,12 +148,12 @@ serve(async (req) => {
   // -------------------------------------------------------------------
   if (url.searchParams.get("action") === "confirm") {
     const body = await readJson<ConfirmBody>(req);
-    if (!body.photoId) throw new ApiError("PHOTO_ID_REQUIRED", "Informe photoId.", 400);
+    const photoId = requireUuid(body.photoId, "photoId");
 
     const { data: photo, error: readError } = await admin
       .from("court_photos")
       .select("id, user_id, storage_path, is_uploaded")
-      .eq("id", body.photoId)
+      .eq("id", photoId)
       .maybeSingle<{ id: string; user_id: string; storage_path: string; is_uploaded: boolean }>();
 
     if (readError) throw new ApiError("DATABASE_ERROR", readError.message, 500);
@@ -190,7 +202,7 @@ serve(async (req) => {
   // POST — cria a linha e devolve a URL assinada de upload
   // -------------------------------------------------------------------
   const body = await readJson<CreateBody>(req);
-  if (!body.courtId) throw new ApiError("COURT_REQUIRED", "Informe courtId.", 400);
+  const courtId = requireUuid(body.courtId, "courtId");
 
   const contentType = body.contentType ?? "image/jpeg";
   const extension = ALLOWED_TYPES[contentType];
@@ -206,18 +218,18 @@ serve(async (req) => {
   const { data: court, error: courtError } = await admin
     .from("courts")
     .select("id")
-    .eq("id", body.courtId)
+    .eq("id", courtId)
     .maybeSingle();
 
   if (courtError) throw new ApiError("DATABASE_ERROR", courtError.message, 500);
   if (!court) throw new ApiError("COURT_NOT_FOUND", "Quadra não encontrada.", 404);
 
-  const storagePath = `${body.courtId}/${crypto.randomUUID()}.${extension}`;
+  const storagePath = `${courtId}/${crypto.randomUUID()}.${extension}`;
 
   const { data: photo, error: insertError } = await admin
     .from("court_photos")
     .insert({
-      court_id: body.courtId,
+      court_id: courtId,
       user_id: user.id,
       storage_path: storagePath,
       content_type: contentType,

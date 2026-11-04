@@ -1,0 +1,25 @@
+Copyright (c) 2026 Pedro Santos. Todos os direitos reservados.
+
+Este software e a documentação que o acompanha são proprietários. Sem
+autorização escrita do titular do copyright, não é permitido usar,
+copiar, modificar, mesclar, publicar, distribuir, sublicenciar ou
+vender cópias deste software, nem obras derivadas dele.
+
+O software é fornecido "como está", sem garantia de qualquer natureza,
+expressa ou implícita, incluindo mas não se limitando a garantias de
+comerciabilidade, adequação a uma finalidade específica e não violação.
+Em nenhuma hipótese o titular do copyright será responsável por
+qualquer reclamação, dano ou outra responsabilidade decorrente do
+software ou de seu uso.
+
+---
+
+Nota: a ausência de um arquivo de licença significa, por padrão, "todos
+os direitos reservados" — mas em silêncio, o que deixa qualquer pessoa
+que encontre o repositório sem saber o que pode fazer. Este arquivo só
+escreve o que já valia.
+
+Se um dia a intenção for abrir o projeto (MIT, Apache-2.0), é trocar
+este arquivo e o campo `license` em web/package.json. É uma decisão de
+produto, não de código: abrir é irreversível na prática, porque as
+cópias feitas sob a licença aberta continuam válidas.

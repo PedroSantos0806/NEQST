@@ -26,7 +26,13 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('96000000-0000-0000-0000-000000000096', 'r-gabi@example.com', '{"full_name":"Gabi Atrás"}'),
   ('16000000-0000-0000-0000-000000000016', 'r-admin@example.com', '{"full_name":"Admin Quadra"}'),
   ('26000000-0000-0000-0000-000000000026', 'r-hugo@example.com', '{"full_name":"Hugo Primeiro"}'),
-  ('36000000-0000-0000-0000-000000000036', 'r-iris@example.com', '{"full_name":"Iris Atrás"}');
+  ('36000000-0000-0000-0000-000000000036', 'r-iris@example.com', '{"full_name":"Iris Atrás"}'),
+  ('46000000-0000-0000-0000-000000000046', 'r-joca@example.com', '{"full_name":"Joca Jogando"}'),
+  ('56000000-0000-0000-0000-000000000056', 'r-kiko@example.com', '{"full_name":"Kiko Esperando"}'),
+  ('66000000-0000-0000-0000-000000000066', 'r-lia@example.com',  '{"full_name":"Lia Esquecida"}'),
+  ('76000000-0000-0000-0000-000000000076', 'r-mano@example.com', '{"full_name":"Mano Esquecido"}'),
+  ('86000000-0000-0000-0000-000000000086', 'r-nina@example.com', '{"full_name":"Nina Esquecida"}'),
+  ('06000000-0000-0000-0000-000000000006', 'r-oli@example.com',  '{"full_name":"Oli Presente"}');
 
 update public.profiles set role = 'admin' where id = '16000000-0000-0000-0000-000000000016';
 
@@ -45,7 +51,12 @@ values
    'teste-rotacao-q3', 'Quadra 03', -23.570200, -46.650200, 'fixed_qr'),
   -- Quadra limpa, sem tablet, para o caso da tolerância do primeiro turno.
   ('d6d60000-0000-0000-0000-0000000000d6', '66660000-0000-0000-0000-000000000006', 4, 'hard', 40,
-   'teste-rotacao-q4', 'Quadra 04', -23.570300, -46.650300, 'fixed_qr');
+   'teste-rotacao-q4', 'Quadra 04', -23.570300, -46.650300, 'fixed_qr'),
+  -- E outra para a limpeza por inatividade, que precisa de estado próprio.
+  ('e6e60000-0000-0000-0000-0000000000e6', '66660000-0000-0000-0000-000000000006', 5, 'hard', 40,
+   'teste-rotacao-q5', 'Quadra 05', -23.570400, -46.650400, 'fixed_qr'),
+  ('f6f60000-0000-0000-0000-0000000000f6', '66660000-0000-0000-0000-000000000006', 6, 'hard', 40,
+   'teste-rotacao-q6', 'Quadra 06', -23.570500, -46.650500, 'fixed_qr');
 
 -- A q1 e a q3 têm tablet aceso; a q2 não tem nenhum, de propósito: é
 -- ela que prova que a quadra sem tablet volta para a troca automática.
@@ -78,6 +89,10 @@ create or replace function pg_temp.q3() returns uuid language sql as $$
   select 'c6c60000-0000-0000-0000-0000000000c6'::uuid $$;
 create or replace function pg_temp.q4() returns uuid language sql as $$
   select 'd6d60000-0000-0000-0000-0000000000d6'::uuid $$;
+create or replace function pg_temp.q5() returns uuid language sql as $$
+  select 'e6e60000-0000-0000-0000-0000000000e6'::uuid $$;
+create or replace function pg_temp.q6() returns uuid language sql as $$
+  select 'f6f60000-0000-0000-0000-0000000000f6'::uuid $$;
 
 -- Entrar na fila: o scan e o join, que é o que a pessoa faz ao chegar.
 create or replace function pg_temp.entra(p_user uuid, p_court uuid, p_token text)
@@ -811,6 +826,114 @@ begin
   perform pg_temp.vence_a_chamada(pg_temp.q1());
   v_tela := public.tablet_screen(v_token);
   assert (v_tela ->> 'is_live')::boolean, format('o turno começou: %s', v_tela ->> 'status_text');
+end $$;
+
+-- =====================================================================
+-- 14. A limpeza por inatividade não pode expulsar quem só esperou, nem
+--     deixar a quadra travada
+--
+-- A auditoria reproduziu os dois defeitos: um grupo que esperou 3h numa
+-- fila movimentada era marcado `expired`, e expirar um grupo `ready`
+-- deixava a quadra `available` com gente em `waiting` e ninguém para
+-- chamar — inutilizável até alguém rodar call_next_team à mão.
+-- =====================================================================
+do $$
+declare
+  v_kiko uuid;
+  v_saiu integer;
+begin
+  -- Fila viva na q5: o Joca em quadra e o Kiko esperando há 4 horas.
+  perform pg_temp.entra('46000000-0000-0000-0000-000000000046', pg_temp.q5(), 'r-joca-1');
+  perform pg_temp.as_user('46000000-0000-0000-0000-000000000046');
+  perform pg_temp.scan('46000000-0000-0000-0000-000000000046', pg_temp.q5(), 'r-joca-ci');
+  perform public.check_in_and_start('r-joca-ci');
+  assert pg_temp.em_quadra(pg_temp.q5()) = 'Joca', 'o Joca está em quadra';
+
+  perform pg_temp.entra('56000000-0000-0000-0000-000000000056', pg_temp.q5(), 'r-kiko-1');
+
+  select e.id into v_kiko from public.queue_entries e
+  join public.queue_entry_members m on m.entry_id = e.id
+  where m.user_id = '56000000-0000-0000-0000-000000000056' and m.is_active
+    and e.court_id = pg_temp.q5();
+
+  update public.queue_entries
+     set first_joined_at = now() - interval '4 hours',
+         joined_at = now() - interval '4 hours',
+         called_at = null
+   where court_id = pg_temp.q5() and status in ('waiting', 'ready');
+
+  v_saiu := public.expire_stale_queue_entries('3 hours');
+
+  assert v_saiu = 0, format(
+    'com alguém em quadra, esperar 4 h é o normal de uma fila movimentada: %s saíram', v_saiu);
+  assert (select status from public.queue_entries where id = v_kiko)
+         in ('waiting', 'ready'),
+    'quem esperou não é expulso';
+end $$;
+
+-- Já numa quadra parada, sem ninguém chamado, a vaga esquecida sai —
+-- e a fila ANDA
+do $$
+declare
+  v_court public.courts;
+  v_saiu  integer;
+begin
+  -- Quadra parada: dois grupos que chegaram há 4 horas, ninguém em
+  -- quadra, ninguém chamado. Esses sim foram embora.
+  perform pg_temp.entra('66000000-0000-0000-0000-000000000066', pg_temp.q6(), 'r-lia-1');
+  perform pg_temp.entra('76000000-0000-0000-0000-000000000076', pg_temp.q6(), 'r-mano-1');
+
+  update public.queue_entries
+     set first_joined_at = now() - interval '4 hours',
+         joined_at = now() - interval '4 hours',
+         called_at = null,
+         status = 'waiting',
+         call_expires_at = null
+   where court_id = pg_temp.q6() and status in ('waiting', 'ready');
+
+  v_saiu := public.expire_stale_queue_entries('3 hours');
+  assert v_saiu = 2, format('as duas vagas esquecidas saem: %s', v_saiu);
+
+  select * into v_court from public.courts c where c.id = pg_temp.q6();
+  assert v_court.status = 'available', format('a quadra fica livre: %s', v_court.status);
+  assert pg_temp.ordem(pg_temp.q6()) = '', format('e a fila vazia: %s', pg_temp.ordem(pg_temp.q6()));
+end $$;
+
+-- Com fila atrás, expirar o grupo chamado passa a vez em vez de travar
+do $$
+declare
+  v_nina  uuid;
+  v_saiu  integer;
+  v_court public.courts;
+begin
+  -- A q6 está vazia depois do bloco acima. Nina chegou há 4 horas e
+  -- nunca foi chamada; Oli chegou agora e está ali.
+  perform pg_temp.entra('86000000-0000-0000-0000-000000000086', pg_temp.q6(), 'r-nina-1');
+  perform pg_temp.entra('06000000-0000-0000-0000-000000000006', pg_temp.q6(), 'r-oli-1');
+
+  select e.id into v_nina from public.queue_entries e
+  join public.queue_entry_members m on m.entry_id = e.id
+  where m.user_id = '86000000-0000-0000-0000-000000000086' and m.is_active
+    and e.court_id = pg_temp.q6();
+
+  update public.queue_entries
+     set first_joined_at = now() - interval '4 hours', called_at = null,
+         status = 'ready', call_expires_at = null
+   where id = v_nina;
+
+  v_saiu := public.expire_stale_queue_entries('3 hours');
+  assert v_saiu = 1, format('só a vaga esquecida sai: %s', v_saiu);
+
+  -- E a quadra não ficou travada: o próximo foi chamado.
+  assert pg_temp.ordem(pg_temp.q6()) = 'Oli', format('fila: %s', pg_temp.ordem(pg_temp.q6()));
+  assert (select status from public.queue_entries e
+          join public.queue_entry_members m on m.entry_id = e.id
+          where m.user_id = '06000000-0000-0000-0000-000000000006' and m.is_active
+            and e.court_id = pg_temp.q6()) = 'ready',
+    'a vez passou para quem ficou, em vez de a quadra travar';
+
+  select * into v_court from public.courts c where c.id = pg_temp.q6();
+  assert v_court.status = 'available', format('quadra livre e chamável: %s', v_court.status);
 end $$;
 
 rollback;

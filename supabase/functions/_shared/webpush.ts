@@ -238,6 +238,67 @@ export function audienceOf(endpoint: string): string {
   return new URL(endpoint).origin;
 }
 
+/**
+ * Os hosts que realmente entregam push na web.
+ *
+ * Sem esta lista, a única validação do endpoint era o prefixo
+ * `https://` — e aí qualquer conta logada registrava uma URL própria,
+ * para a qual o worker passava a fazer POST a cada ciclo de cron COM o
+ * JWT VAPID do projeto no header Authorization. Ou seja: credencial de
+ * servidor saindo repetidamente para um host escolhido pelo atacante, e
+ * o backend virando emissor de requisições para destino arbitrário.
+ *
+ * O `aud` do token limita o reuso, mas credencial de servidor não sai
+ * para quem não precisa dela.
+ */
+const PUSH_HOSTS: ReadonlyArray<RegExp> = [
+  // Chrome, Edge, Opera e os outros baseados em Chromium.
+  /^fcm\.googleapis\.com$/,
+  /^android\.googleapis\.com$/,
+  // Firefox.
+  /^updates\.push\.services\.mozilla\.com$/,
+  /^[a-z0-9-]+\.push\.services\.mozilla\.com$/,
+  // Safari (macOS e iOS).
+  /^web\.push\.apple\.com$/,
+  // Edge legado / WNS.
+  /^[a-z0-9-]+\.notify\.windows\.com$/,
+  /^notify\.windows\.com$/,
+];
+
+/** O endpoint é de um push service de verdade? */
+export function isPushEndpoint(endpoint: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== "https:") return false;
+  // Usuário e senha na URL são truque de ofuscação de host.
+  if (url.username || url.password) return false;
+
+  const host = url.hostname.toLowerCase();
+  return PUSH_HOSTS.some((pattern) => pattern.test(host));
+}
+
+export class PushEndpointError extends Error {
+  constructor(endpoint: string) {
+    super(`endpoint de push não reconhecido: ${endpoint}`);
+    this.name = "PushEndpointError";
+  }
+}
+
+/**
+ * Valida o endpoint ou recusa. Usada no registro e DE NOVO antes de
+ * enviar: a linha pode ter sido gravada antes desta regra existir.
+ */
+export function requirePushEndpoint(value: unknown): string {
+  const endpoint = typeof value === "string" ? value.trim() : "";
+  if (!isPushEndpoint(endpoint)) throw new PushEndpointError(endpoint || "(vazio)");
+  return endpoint;
+}
+
 export async function createVapidToken(
   endpoint: string,
   keys: VapidKeys,
@@ -305,6 +366,11 @@ export async function sendWebPush(
   keys: VapidKeys,
   options: { ttlSeconds?: number; urgency?: "very-low" | "low" | "normal" | "high" } = {},
 ): Promise<void> {
+  // Revalidado aqui, e não só no registro: o banco pode ter linhas
+  // gravadas antes da allow-list existir, e é neste fetch que o JWT
+  // VAPID sai do projeto.
+  requirePushEndpoint(subscription.endpoint);
+
   const { body } = await encryptPushPayload({
     payload,
     p256dh: subscription.p256dh,

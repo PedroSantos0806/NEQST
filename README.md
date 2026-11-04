@@ -29,7 +29,9 @@ Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
   Sem tablet aceso, a quadra volta à troca automática da Sprint 6.
 
 O que difere entre web e app (push, QR Code, CORS, login) está em
-[docs/plataformas.md](docs/plataformas.md).
+[docs/plataformas.md](docs/plataformas.md). A resposta à auditoria de
+segurança — o que foi corrigido, o que foi medido diferente do relatório
+e o que ficou de fora — está em [docs/auditoria.md](docs/auditoria.md).
 
 Stack: **Supabase** (Postgres + Auth + Realtime + Edge Functions em Deno),
 conforme as decisões técnicas recomendadas no documento da sprint.

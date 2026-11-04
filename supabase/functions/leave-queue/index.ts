@@ -7,7 +7,7 @@
  *
  * Body: { entryId: string, reason?: string }
  */
-import { ApiError, json, postgrestError, readJson, requireMethod, serve } from "../_shared/http.ts";
+import { json, postgrestError, readJson, requireMethod, requireUuid, serve } from "../_shared/http.ts";
 import { requireUser } from "../_shared/supabase.ts";
 
 interface LeaveRequest {
@@ -21,12 +21,8 @@ serve(async (req) => {
   const { client } = await requireUser(req);
   const body = await readJson<LeaveRequest>(req);
 
-  if (!body.entryId) {
-    throw new ApiError("ENTRY_ID_REQUIRED", "Informe o grupo de que você quer sair.", 400);
-  }
-
   const { data, error } = await client.rpc("leave_queue", {
-    p_entry_id: body.entryId,
+    p_entry_id: requireUuid(body.entryId, "entryId"),
     p_reason: body.reason ?? null,
   });
 

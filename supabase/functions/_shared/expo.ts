@@ -59,12 +59,50 @@ export async function sendExpoPush(
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Expo Push API respondeu ${response.status}: ${text}`);
+      // Os tickets dos lotes JÁ enviados vão no erro.
+      //
+      // Lançar e perdê-los fazia o retry reenviar o que a Expo já tinha
+      // entregue: o aviso chegava duas vezes no mesmo celular. Quem
+      // chama decide o que fazer com o pedaço que deu certo.
+      throw new ExpoPartialError(
+        `Expo Push API respondeu ${response.status}: ${text}`,
+        tickets,
+      );
     }
 
     const payload = await response.json() as { data?: ExpoPushTicket[] };
-    tickets.push(...(payload.data ?? []));
+    const batchTickets = payload.data ?? [];
+
+    // A Expo devolve um ticket por mensagem, na ordem. Se vier faltando,
+    // casar por índice desloca TODOS os seguintes — e o índice errado
+    // desativava o token de push de outro usuário, que simplesmente
+    // parava de ser avisado da vez dele. Melhor marcar o lote como
+    // indefinido do que atribuir desfecho à pessoa errada.
+    if (batchTickets.length !== batch.length) {
+      throw new ExpoPartialError(
+        `Expo Push API devolveu ${batchTickets.length} tickets para ${batch.length} mensagens`,
+        tickets,
+      );
+    }
+
+    tickets.push(...batchTickets);
   }
 
   return tickets;
+}
+
+/**
+ * Falha no meio do envio, carregando o que já deu certo.
+ *
+ * Sem isto, um 429 no terceiro lote perdia os tickets dos dois
+ * primeiros e o retry reenviava o que já havia sido entregue.
+ */
+export class ExpoPartialError extends Error {
+  readonly tickets: ExpoPushTicket[];
+
+  constructor(message: string, tickets: ExpoPushTicket[]) {
+    super(message);
+    this.name = "ExpoPartialError";
+    this.tickets = tickets;
+  }
 }

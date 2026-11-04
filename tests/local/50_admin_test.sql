@@ -363,8 +363,11 @@ set local "request.jwt.claim.sub" = 'a3000000-0000-0000-0000-00000000000c';
 
 do $$
 begin
-  -- O WITH CHECK da política "profiles: dono atualiza" exige que o papel
-  -- continue o mesmo, então a tentativa nem chega a gravar.
+  -- Duas camadas barram a auto-promoção, e qualquer uma bastaria:
+  --   . o grant por coluna (auditoria) não dá update em `role`;
+  --   . o WITH CHECK da política "profiles: dono atualiza" exige que o
+  --     papel continue o mesmo.
+  -- As duas levantam insufficient_privilege.
   begin
     update public.profiles set role = 'admin'::public.app_role
     where id = 'a3000000-0000-0000-0000-00000000000c';
@@ -374,7 +377,12 @@ begin
   end;
 end $$;
 
--- E o papel continua o que era
+-- E o papel continua o que era.
+--
+-- Conferido como dono da tabela de propósito: desde a auditoria, o
+-- cliente não lê a coluna `role` — era por ela que se descobria qual
+-- conta é admin antes de tentar escalar.
+reset role;
 do $$
 begin
   assert (select role from public.profiles where id = 'a3000000-0000-0000-0000-00000000000c')

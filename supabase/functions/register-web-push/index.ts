@@ -13,6 +13,7 @@
  */
 import { ApiError, json, readJson, requireEnv, serve } from "../_shared/http.ts";
 import { requireUser, serviceClient } from "../_shared/supabase.ts";
+import { PushEndpointError, requirePushEndpoint } from "../_shared/webpush.ts";
 
 interface SubscriptionBody {
   endpoint?: string;
@@ -39,9 +40,18 @@ serve(async (req) => {
   const body = await readJson<SubscriptionBody>(req);
   const admin = serviceClient();
 
-  const endpoint = body.endpoint?.trim();
-  if (!endpoint || !/^https:\/\//.test(endpoint)) {
-    throw new ApiError("INVALID_SUBSCRIPTION", "endpoint da subscription inválido.", 400);
+  let endpoint: string;
+  try {
+    endpoint = requirePushEndpoint(body.endpoint);
+  } catch (cause) {
+    if (cause instanceof PushEndpointError) {
+      throw new ApiError(
+        "INVALID_SUBSCRIPTION",
+        "endpoint da subscription não é de um serviço de push conhecido.",
+        400,
+      );
+    }
+    throw cause;
   }
 
   if (req.method === "DELETE") {
@@ -67,6 +77,35 @@ serve(async (req) => {
   }
 
   // O mesmo navegador pode trocar de conta: o endpoint é a identidade.
+  //
+  // Mas o endpoint sozinho não prova que a chamada vem DAQUELE
+  // navegador — ele aparece em log, em banco, em captura de rede. Quem
+  // soubesse o endpoint de outra pessoa reescrevia o user_id para si: a
+  // vítima parava de receber "É a sua vez!" e perdia a vaga, e as
+  // notificações do atacante chegavam no aparelho dela.
+  //
+  // As chaves p256dh/auth são o segredo do aparelho, e `subscribe()` com
+  // a mesma applicationServerKey devolve sempre as mesmas: a troca de
+  // conta legítima apresenta chaves idênticas, e quem só tem o endpoint
+  // não tem como apresentá-las.
+  const { data: existing, error: lookupError } = await admin
+    .from("web_push_subscriptions")
+    .select("user_id, p256dh, auth")
+    .eq("endpoint", endpoint)
+    .maybeSingle();
+
+  if (lookupError) throw new ApiError("DATABASE_ERROR", lookupError.message, 500);
+
+  if (existing && existing.user_id !== user.id) {
+    if (existing.p256dh !== p256dh || existing.auth !== auth) {
+      throw new ApiError(
+        "SUBSCRIPTION_NOT_YOURS",
+        "Esta inscrição de push é de outro aparelho.",
+        403,
+      );
+    }
+  }
+
   const { data, error } = await admin
     .from("web_push_subscriptions")
     .upsert(
