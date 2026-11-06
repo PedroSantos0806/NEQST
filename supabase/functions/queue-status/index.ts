@@ -5,8 +5,8 @@
  * Fallback de polling para quando o WebSocket do Realtime cair.
  * Resposta cacheável por 10s (o app também cacheia a quadra por 60s).
  */
-import { ApiError, corsHeaders, postgrestError, requireMethod, serve } from "../_shared/http.ts";
-import { serviceClient } from "../_shared/supabase.ts";
+import { ApiError, postgrestError, requireMethod, requireUuid, serve } from "../_shared/http.ts";
+import { anonClient } from "../_shared/supabase.ts";
 
 serve(async (req) => {
   requireMethod(req, "GET");
@@ -19,11 +19,14 @@ serve(async (req) => {
     throw new ApiError("COURT_REQUIRED", "Informe courtId ou slug.", 400);
   }
 
-  const admin = serviceClient();
-  let courtId = courtIdParam;
+  // Leitura pública: a chave anônima basta. Com service_role, qualquer
+  // bug futuro nesta rota passaria por cima de RLS — e esta é uma das
+  // três rotas que atendem sem JWT nenhum.
+  const client = anonClient();
+  let courtId = courtIdParam ? requireUuid(courtIdParam, "courtId") : null;
 
   if (!courtId && slug) {
-    const { data, error } = await admin
+    const { data, error } = await client
       .from("courts")
       .select("id")
       .eq("slug", slug)
@@ -34,13 +37,15 @@ serve(async (req) => {
     courtId = data.id;
   }
 
-  const { data, error } = await admin.rpc("court_queue", { p_court_id: courtId });
+  const { data, error } = await client.rpc("court_queue", { p_court_id: courtId });
   if (error) postgrestError(error);
 
+  // Sem os cabeçalhos de CORS aqui: quem resolve a origem é o wrapper
+  // `serve()`, e repetir a constante permissiva neste lugar foi o que
+  // deixou outra função respondendo `*` por meses.
   return new Response(JSON.stringify(data), {
     status: 200,
     headers: {
-      ...corsHeaders,
       "Content-Type": "application/json",
       "Cache-Control": "public, max-age=10",
     },

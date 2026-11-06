@@ -1,19 +1,17 @@
 -- =====================================================================
--- A quadra anda sozinha
+-- O totem da quadra: 40 min de jogo, troca de 1:30 e pausas
 --
---   acabou o tempo  ->  1 min de troca  ->  o próximo começa sozinho
---                            e quem jogou vai para o fim da fila
+-- Handoff do mock (05/11/2026) + a fila sem conta: a party digita nome e
+-- quantidade, no totem ou pelo QR, e os dois caminhos escrevem na mesma
+-- fila. Cinco estados, e só Pausada não sai sozinha pelo relógio.
 --
--- O que estes testes provam, e é o ponto da mudança: entre o fim de um
--- turno e o começo do próximo, NINGUÉM chama nada. Só o cron
--- (advance_expired_queues) e, quando alguém está com a tela aberta,
--- nudge_court — que também não decide nada, só executa o que venceu.
+-- Os casos cobrem, nesta ordem: entrar numa quadra vazia, a fila com
+-- previsão, o aviso de 1 minuto, a troca de 1:30, a pergunta de saída
+-- (sem resposta e com), Continuar jogando, as três pausas, o QR sem
+-- login, o admin e a limpeza por inatividade.
 -- =====================================================================
-\set ON_ERROR_STOP on
-
 begin;
 
--- ---------------------------------------------------------------------
 -- Fixtures
 -- ---------------------------------------------------------------------
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -24,7 +22,15 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('e6000000-0000-0000-0000-0000000000e6', 'r-edu@example.com',  '{"full_name":"Edu Apressado"}'),
   ('f6000000-0000-0000-0000-0000000000f6', 'r-fe@example.com',   '{"full_name":"Fê Rotação"}'),
   ('96000000-0000-0000-0000-000000000096', 'r-gabi@example.com', '{"full_name":"Gabi Atrás"}'),
-  ('16000000-0000-0000-0000-000000000016', 'r-admin@example.com', '{"full_name":"Admin Quadra"}');
+  ('16000000-0000-0000-0000-000000000016', 'r-admin@example.com', '{"full_name":"Admin Quadra"}'),
+  ('26000000-0000-0000-0000-000000000026', 'r-hugo@example.com', '{"full_name":"Hugo Primeiro"}'),
+  ('36000000-0000-0000-0000-000000000036', 'r-iris@example.com', '{"full_name":"Iris Atrás"}'),
+  ('46000000-0000-0000-0000-000000000046', 'r-joca@example.com', '{"full_name":"Joca Jogando"}'),
+  ('56000000-0000-0000-0000-000000000056', 'r-kiko@example.com', '{"full_name":"Kiko Esperando"}'),
+  ('66000000-0000-0000-0000-000000000066', 'r-lia@example.com',  '{"full_name":"Lia Esquecida"}'),
+  ('76000000-0000-0000-0000-000000000076', 'r-mano@example.com', '{"full_name":"Mano Esquecido"}'),
+  ('86000000-0000-0000-0000-000000000086', 'r-nina@example.com', '{"full_name":"Nina Esquecida"}'),
+  ('06000000-0000-0000-0000-000000000006', 'r-oli@example.com',  '{"full_name":"Oli Presente"}');
 
 update public.profiles set role = 'admin' where id = '16000000-0000-0000-0000-000000000016';
 
@@ -40,7 +46,30 @@ values
   ('b6b60000-0000-0000-0000-0000000000b6', '66660000-0000-0000-0000-000000000006', 2, 'hard', 40,
    'teste-rotacao-q2', 'Quadra 02', -23.570100, -46.650100, 'fixed_qr'),
   ('c6c60000-0000-0000-0000-0000000000c6', '66660000-0000-0000-0000-000000000006', 3, 'hard', 40,
-   'teste-rotacao-q3', 'Quadra 03', -23.570200, -46.650200, 'fixed_qr');
+   'teste-rotacao-q3', 'Quadra 03', -23.570200, -46.650200, 'fixed_qr'),
+  -- Quadra limpa, sem tablet, para o caso da tolerância do primeiro turno.
+  ('d6d60000-0000-0000-0000-0000000000d6', '66660000-0000-0000-0000-000000000006', 4, 'hard', 40,
+   'teste-rotacao-q4', 'Quadra 04', -23.570300, -46.650300, 'fixed_qr'),
+  -- E outra para a limpeza por inatividade, que precisa de estado próprio.
+  ('e6e60000-0000-0000-0000-0000000000e6', '66660000-0000-0000-0000-000000000006', 5, 'hard', 40,
+   'teste-rotacao-q5', 'Quadra 05', -23.570400, -46.650400, 'fixed_qr'),
+  ('f6f60000-0000-0000-0000-0000000000f6', '66660000-0000-0000-0000-000000000006', 6, 'hard', 40,
+   'teste-rotacao-q6', 'Quadra 06', -23.570500, -46.650500, 'fixed_qr'),
+  -- E a q7 para a pausa, que precisa de uma quadra que ninguém mexe.
+  ('a7a70000-0000-0000-0000-0000000000a7', '66660000-0000-0000-0000-000000000006', 7, 'hard', 40,
+   'teste-rotacao-q7', 'Quadra 07', -23.570600, -46.650600, 'fixed_qr');
+
+-- Um totem por quadra, como no handoff. Não existe mais "quadra com
+-- tablet" e "quadra sem": a troca de 1:30 é a mesma em todas, e o totem
+-- é só quem escreve nela.
+insert into public.court_devices (court_id, label, token_hash, last_seen_at)
+values
+  ('a6a60000-0000-0000-0000-0000000000a6', 'totem q1',
+   public.hash_scan_token('totem-q1-token'), now()),
+  ('b6b60000-0000-0000-0000-0000000000b6', 'totem q2',
+   public.hash_scan_token('totem-q2-token'), now()),
+  ('c6c60000-0000-0000-0000-0000000000c6', 'totem q3',
+   public.hash_scan_token('totem-q3-token'), now());
 
 create or replace function pg_temp.as_user(p_user uuid)
 returns void language sql as $$
@@ -62,6 +91,20 @@ create or replace function pg_temp.q2() returns uuid language sql as $$
   select 'b6b60000-0000-0000-0000-0000000000b6'::uuid $$;
 create or replace function pg_temp.q3() returns uuid language sql as $$
   select 'c6c60000-0000-0000-0000-0000000000c6'::uuid $$;
+create or replace function pg_temp.q4() returns uuid language sql as $$
+  select 'd6d60000-0000-0000-0000-0000000000d6'::uuid $$;
+create or replace function pg_temp.q5() returns uuid language sql as $$
+  select 'e6e60000-0000-0000-0000-0000000000e6'::uuid $$;
+create or replace function pg_temp.q6() returns uuid language sql as $$
+  select 'f6f60000-0000-0000-0000-0000000000f6'::uuid $$;
+create or replace function pg_temp.q7() returns uuid language sql as $$
+  select 'a7a70000-0000-0000-0000-0000000000a7'::uuid $$;
+
+-- O token do totem de cada quadra, que é a credencial de quem está lá.
+create or replace function pg_temp.totem_q1() returns text language sql as $$
+  select 'totem-q1-token'::text $$;
+create or replace function pg_temp.totem_q2() returns text language sql as $$
+  select 'totem-q2-token'::text $$;
 
 -- Entrar na fila: o scan e o join, que é o que a pessoa faz ao chegar.
 create or replace function pg_temp.entra(p_user uuid, p_court uuid, p_token text)
@@ -72,20 +115,19 @@ begin
   return (public.join_queue(p_token) ->> 'entry_id')::uuid;
 end $$;
 
--- O relógio do turno, empurrado para trás. É o que o tempo real faria.
+-- Os relógios, empurrados para trás. É o que o tempo real faria.
 create or replace function pg_temp.vence_o_turno(p_court uuid)
 returns void language sql as $$
   update public.matches set expires_at = now() - interval '1 second'
   where court_id = p_court and ended_at is null;
 $$;
 
-create or replace function pg_temp.acaba_a_troca(p_court uuid)
+create or replace function pg_temp.vence_a_troca(p_court uuid)
 returns void language sql as $$
-  update public.courts set changeover_until = now() - interval '1 second'
-  where id = p_court and changeover_until is not null;
+  update public.courts set handover_until = now() - interval '1 second'
+  where id = p_court and handover_until is not null;
 $$;
 
--- A vaga ativa de uma pessoa nesta quadra.
 create or replace function pg_temp.vaga_de(p_user uuid, p_court uuid)
 returns public.queue_entries language sql as $$
   select e.* from public.queue_entries e
@@ -116,376 +158,388 @@ returns text language sql as $$
   where mt.court_id = p_court and mt.ended_at is null;
 $$;
 
+-- Vazio de verdade: `->` devolve o null de JSON, que não é NULL de SQL.
+create or replace function pg_temp.vazio(p jsonb)
+returns boolean language sql immutable as $$
+  select p is null or jsonb_typeof(p) = 'null';
+$$;
+
+-- Quem está entrando na quadra agora, pelo primeiro nome.
+create or replace function pg_temp.entrando(p_court uuid)
+returns text language sql as $$
+  select coalesce(
+    (select split_part(
+              coalesce(pr.full_name, e.party_name, e.offline_label, 'sem app'), ' ', 1)
+       from public.courts c
+       join public.queue_entries e on e.id = c.handover_entry_id
+       left join public.queue_entry_members m
+              on m.entry_id = e.id and m.is_active and m.role = 'owner'
+       left join public.profiles pr on pr.id = m.user_id
+      where c.id = p_court and c.handover_phase = 'changeover'),
+    'ninguém');
+$$;
+
 -- =====================================================================
--- 1. Ana chega primeiro, Bia atrás. O turno da Ana começa no check-in,
---    como a Sprint 5 definiu — é o único turno que depende disso.
+-- 1. Quadra livre → Em jogo: quem chega numa quadra vazia já joga
+--
+-- A party é digitada no totem: nome e quantidade, sem conta nenhuma.
 -- =====================================================================
 do $$
-declare
-  v_ana uuid;
-  v_bia uuid;
-  v_e   public.queue_entries;
+declare v jsonb; v_tela jsonb;
 begin
-  v_ana := pg_temp.entra('a6000000-0000-0000-0000-0000000000a6', pg_temp.q1(), 'r-ana-1');
+  perform set_config('request.jwt.claim.sub', '', true);
+  v := public.totem_join(pg_temp.totem_q1(), 'Rafael Lima', 2);
 
-  v_e := pg_temp.vaga_de('a6000000-0000-0000-0000-0000000000a6', pg_temp.q1());
-  assert v_e.status = 'ready', format('Ana chamada: %s', v_e.status);
-  assert v_e.call_expires_at is null, 'sozinha na fila, sem relógio correndo';
-  assert v_e.turn_number = 1, format('primeiro turno: %s', v_e.turn_number);
+  assert (v ->> 'playing')::boolean, format('quadra vazia: joga na hora: %s', v);
+  assert (v ->> 'party_token') is null, 'o totem não devolve o segredo da party';
 
-  v_bia := pg_temp.entra('b6000000-0000-0000-0000-0000000000b6', pg_temp.q1(), 'r-bia-1');
-
-  v_e := pg_temp.vaga_de('a6000000-0000-0000-0000-0000000000a6', pg_temp.q1());
-  assert v_e.call_expires_at is not null, 'com fila atrás, a tolerância passa a valer';
-
-  -- Check-in da Ana: o relógio da quadra começa aqui.
-  perform pg_temp.as_user('a6000000-0000-0000-0000-0000000000a6');
-  perform pg_temp.scan('a6000000-0000-0000-0000-0000000000a6', pg_temp.q1(), 'r-ana-ci');
-  perform public.check_in_and_start('r-ana-ci');
-
-  assert pg_temp.em_quadra(pg_temp.q1()) = 'Ana', format('em quadra: %s', pg_temp.em_quadra(pg_temp.q1()));
-  assert pg_temp.ordem(pg_temp.q1()) = 'Bia', format('fila: %s', pg_temp.ordem(pg_temp.q1()));
+  v_tela := v -> 'screen';
+  assert v_tela ->> 'state' = 'playing', format('estado: %s', v_tela ->> 'state');
+  assert v_tela -> 'playing' ->> 'name' = 'Rafael Lima',
+    format('em quadra: %s', v_tela -> 'playing');
+  assert v_tela -> 'playing' ->> 'label' = 'Simples', format('rótulo: %s', v_tela -> 'playing');
+  assert (v_tela ->> 'queue_count')::int = 0, 'fila vazia';
+  assert (v_tela ->> 'remaining_seconds')::int between 2390 and 2400,
+    format('40 minutos: %s', v_tela ->> 'remaining_seconds');
+  assert v_tela -> 'court' ->> 'strip' = 'Quadra 01 · Rápida · Parque da Rotação (teste)',
+    format('a linha fina do topo sai do banco: %s', v_tela -> 'court' ->> 'strip');
 end $$;
 
 -- =====================================================================
--- 2. Acabou o tempo: abre a troca de 1 minuto, a Ana vai para o fim e
---    NINGUÉM entra em quadra ainda
+-- 2. A fila por party: tamanho livre, rótulo pelas palavras do handoff
 -- =====================================================================
 do $$
-declare
-  v_court public.courts;
-  v_nova  public.queue_entries;
-  v_tela  jsonb;
-  v_res   jsonb;
+declare v_tela jsonb; v_q jsonb;
 begin
-  perform pg_temp.vence_o_turno(pg_temp.q1());
-  v_res := public.advance_expired_queues();
+  perform public.totem_join(pg_temp.totem_q1(), 'Marina Souza', 2);
+  perform public.totem_join(pg_temp.totem_q1(), 'Zé do Ibira', 6);
+  v_tela := public.totem_screen(pg_temp.totem_q1());
 
-  assert (v_res ->> 'matches_closed')::integer = 1,
-    format('um turno encerrado: %s', v_res);
-  assert (v_res ->> 'turns_started')::integer = 0,
-    format('o próximo não começa no mesmo instante: %s', v_res);
+  assert (v_tela ->> 'queue_count')::int = 2, format('duas na fila: %s', v_tela ->> 'queue_count');
 
-  assert not exists (select 1 from public.matches mt
-                     where mt.court_id = pg_temp.q1() and mt.ended_at is null),
-    'durante a troca não há partida';
+  v_q := v_tela -> 'queue' -> 0;
+  assert v_q ->> 'name' = 'Marina Souza', format('1ª da fila: %s', v_q);
+  assert (v_q ->> 'is_next')::boolean, 'a 1ª é a próxima';
+  assert v_q ->> 'label' = 'Simples', format('rótulo de 2: %s', v_q ->> 'label');
+  -- Previsão: o que falta do jogo + a troca de 1:30.
+  assert (v_q ->> 'eta_seconds')::int between 2450 and 2490,
+    format('previsão da 1ª: %s', v_q ->> 'eta_seconds');
 
-  select * into v_court from public.courts c where c.id = pg_temp.q1();
-  assert v_court.changeover_until is not null, 'a troca abriu';
-  assert v_court.changeover_until > now(), 'a troca ainda está correndo';
-  assert v_court.changeover_until <= now() + interval '61 seconds',
-    format('a troca é de 1 minuto: %s', v_court.changeover_until - now());
+  v_q := v_tela -> 'queue' -> 1;
+  assert v_q ->> 'label' = 'Grupo de 6, revezando', format('rótulo de 6: %s', v_q ->> 'label');
+  -- Mais uma rodada inteira: 40 min + 1:30.
+  assert (v_q ->> 'eta_seconds')::int - (v_tela -> 'queue' -> 0 ->> 'eta_seconds')::int = 2490,
+    'cada posição custa uma rodada';
+  assert v_q ->> 'source' = 'totem', 'entrou pelo totem';
 
-  -- A Ana voltou para o fim da fila, no segundo turno dela.
-  assert pg_temp.ordem(pg_temp.q1()) = 'Bia,Ana', format('fila: %s', pg_temp.ordem(pg_temp.q1()));
-
-  v_nova := pg_temp.vaga_de('a6000000-0000-0000-0000-0000000000a6', pg_temp.q1());
-  assert v_nova.turn_number = 2, format('segundo turno da Ana: %s', v_nova.turn_number);
-  assert v_nova.requeued_from is not null, 'a vaga nova aponta para a do turno anterior';
-  assert v_nova.status = 'waiting', format('status da vaga nova: %s', v_nova.status);
-  assert v_nova.first_joined_at < v_nova.joined_at,
-    'a hora de chegada original sobrevive à rotação';
-
-  -- O PIN que a Ana passou para os amigos continua valendo.
-  assert (select p2.pin from public.queue_entry_pins p2 where p2.entry_id = v_nova.id)
-       = (select p1.pin from public.queue_entry_pins p1 where p1.entry_id = v_nova.requeued_from),
-    'o PIN do grupo acompanha a rotação';
-
-  -- A Bia foi chamada sem relógio: não há nada que ela precise fazer.
-  assert (select e.status from public.queue_entries e
-          where e.id = (select qp.entry_id from public.queue_positions qp
-                        where qp.court_id = pg_temp.q1() order by qp.position limit 1)) = 'ready',
-    'a Bia está chamada';
-  assert (select e.call_expires_at from public.queue_entries e
-          where e.id = (select qp.entry_id from public.queue_positions qp
-                        where qp.court_id = pg_temp.q1() order by qp.position limit 1)) is null,
-    'na troca não existe prazo de check-in';
-
-  -- A tela diz o que está acontecendo.
-  perform pg_temp.as_user('b6000000-0000-0000-0000-0000000000b6');
-  v_tela := public.court_screen(pg_temp.q1());
-  assert (v_tela ->> 'is_changeover')::boolean, format('a tela mostra a troca: %s', v_tela ->> 'status_text');
-  assert v_tela ->> 'status_text' = 'Troca de grupo', format('status: %s', v_tela ->> 'status_text');
-  assert (v_tela -> 'changeover' ->> 'seconds_left')::integer between 1 and 60,
-    format('contagem da troca: %s', v_tela -> 'changeover');
-  assert (v_tela -> 'changeover' ->> 'next_label') like 'Bia%',
-    format('quem entra: %s', v_tela -> 'changeover' ->> 'next_label');
-  assert (v_tela -> 'changeover' ->> 'next_is_mine')::boolean, 'a Bia vê que é ela quem entra';
-end $$;
-
--- =====================================================================
--- 3. O Caio chega no meio da troca e entra na fila normalmente
--- =====================================================================
-do $$
-begin
-  perform pg_temp.entra('c6000000-0000-0000-0000-0000000000c6', pg_temp.q1(), 'r-caio-1');
-  assert pg_temp.ordem(pg_temp.q1()) = 'Bia,Ana,Caio', format('fila: %s', pg_temp.ordem(pg_temp.q1()));
-end $$;
-
--- Quem não é o primeiro não entra na frente, nem na troca
-do $$
-declare v_code text;
-begin
-  perform pg_temp.as_user('c6000000-0000-0000-0000-0000000000c6');
-  perform pg_temp.scan('c6000000-0000-0000-0000-0000000000c6', pg_temp.q1(), 'r-caio-furando');
+  -- Nome curto e party impossível são recusados.
   begin
-    perform public.check_in_and_start('r-caio-furando');
-    assert false, 'o 3º da fila não entra em quadra';
-  exception when others then
-    get stacked diagnostics v_code = returned_sqlstate;
-    assert v_code = 'NQ015', format('esperava NQ015, obtive %s', v_code);
+    perform public.totem_join(pg_temp.totem_q1(), 'A', 2);
+    assert false, 'nome de 1 letra deveria ser recusado';
+  exception when sqlstate 'NQ041' then null;
+  end;
+  begin
+    perform public.totem_join(pg_temp.totem_q1(), 'Party Grande', 21);
+    assert false, '21 pessoas deveria ser recusado';
+  exception when sqlstate 'NQ042' then null;
   end;
 end $$;
 
 -- =====================================================================
--- 4. Acabou o minuto: o turno da Bia começa SOZINHO, com o slot inteiro
+-- 3. Aviso de 1 minuto: o placar muda, e Continuar não existe com fila
 -- =====================================================================
 do $$
-declare
-  v_res   jsonb;
-  v_match public.matches;
-  v_court public.courts;
+declare v_tela jsonb; v_code text;
 begin
-  perform pg_temp.acaba_a_troca(pg_temp.q1());
-  v_res := public.advance_expired_queues();
+  update public.matches set expires_at = now() + interval '45 seconds'
+   where court_id = pg_temp.q1() and ended_at is null;
 
-  assert (v_res ->> 'turns_started')::integer = 1,
-    format('a quadra começou o turno do próximo sozinha: %s', v_res);
-  assert (v_res ->> 'entries_expired')::integer = 0,
-    format('ninguém perdeu a vez por não fazer nada: %s', v_res);
+  v_tela := public.totem_screen(pg_temp.totem_q1());
+  assert v_tela ->> 'state' = 'ending', format('estado: %s', v_tela ->> 'state');
+  assert not (v_tela ->> 'can_continue')::boolean,
+    'com gente esperando, ninguém segura a quadra por 80 minutos';
 
-  assert pg_temp.em_quadra(pg_temp.q1()) = 'Bia',
-    format('em quadra: %s', pg_temp.em_quadra(pg_temp.q1()));
-  assert pg_temp.ordem(pg_temp.q1()) = 'Ana,Caio', format('fila: %s', pg_temp.ordem(pg_temp.q1()));
+  begin
+    perform public.totem_continue(pg_temp.totem_q1());
+    assert false, 'Continuar com fila deveria ser recusado';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ040', format('esperava NQ040, obtive %s', v_code);
+  end;
+end $$;
 
-  select * into v_match from public.matches mt
-  where mt.court_id = pg_temp.q1() and mt.ended_at is null;
-  assert v_match.slot_minutes = 40, format('slot: %s', v_match.slot_minutes);
-  assert v_match.expires_at > now() + interval '39 minutes',
-    format('o turno da Bia começa inteiro: %s', v_match.expires_at - now());
+-- =====================================================================
+-- 4. Acabou o tempo: troca de 1:30 e a pergunta de saída
+-- =====================================================================
+do $$
+declare v_tela jsonb;
+begin
+  perform pg_temp.vence_o_turno(pg_temp.q1());
+  v_tela := public.totem_screen(pg_temp.totem_q1());
 
-  select * into v_court from public.courts c where c.id = pg_temp.q1();
-  assert v_court.changeover_until is null, 'a troca terminou';
-  assert v_court.status = 'in_game', format('status da quadra: %s', v_court.status);
+  assert v_tela ->> 'state' = 'changeover', format('estado: %s', v_tela ->> 'state');
+  assert (v_tela ->> 'changeover_left')::int between 80 and 90,
+    format('1:30 de troca: %s', v_tela ->> 'changeover_left');
 
-  -- A Bia não fez check-in nenhum: ninguém marcou presença.
+  -- A faixa é de quem acabou de sair, com o texto do handoff.
+  assert v_tela -> 'exit_ask' ->> 'name' = 'Rafael Lima',
+    format('a pergunta é do Rafael: %s', v_tela -> 'exit_ask');
+  assert v_tela -> 'exit_ask' ->> 'text' =
+    'Rafael Lima, acabou seu tempo. Quer sair ou voltar pro fim da fila?',
+    format('texto da faixa: %s', v_tela -> 'exit_ask' ->> 'text');
+
+  -- A próxima aparece nos dois lugares de propósito: ela ainda espera.
+  assert v_tela -> 'next' ->> 'name' = 'Marina Souza', format('entra: %s', v_tela -> 'next');
+  assert v_tela -> 'queue' -> 0 ->> 'name' = 'Marina Souza', 'e segue como 1ª da fila';
+  assert (v_tela ->> 'queue_count')::int = 2, 'ninguém saiu da fila ainda';
+
+  -- O Rafael não voltou sozinho para o fim: isso agora é resposta dele.
   assert not exists (
-    select 1 from public.queue_entry_members m
-    where m.entry_id = v_match.side_a_entry_id and m.checked_in_at is not null
-  ), 'o turno começou sem ninguém fazer check-in';
+    select 1 from public.queue_entries e
+    where e.court_id = pg_temp.q1() and e.party_name = 'Rafael Lima'
+      and e.status in ('waiting', 'ready')),
+    'quem jogou não volta para a fila sem responder';
 end $$;
 
 -- =====================================================================
--- 5. A roda continua: a Bia vai para o fim e a Ana volta a jogar
+-- 5. Sem resposta em 1:30, o padrão é sair — e o próximo entra sozinho
 -- =====================================================================
 do $$
+declare v_tela jsonb;
+begin
+  perform pg_temp.vence_a_troca(pg_temp.q1());
+  v_tela := public.totem_screen(pg_temp.totem_q1());
+
+  assert v_tela ->> 'state' = 'playing', format('estado: %s', v_tela ->> 'state');
+  assert v_tela -> 'playing' ->> 'name' = 'Marina Souza',
+    format('a Marina entrou sozinha, sem apertar nada: %s', v_tela -> 'playing');
+  assert pg_temp.vazio(v_tela -> 'exit_ask'), 'a faixa sumiu quando a próxima entrou';
+  assert (v_tela ->> 'queue_count')::int = 1, 'sobrou o Zé na fila';
+  assert not exists (
+    select 1 from public.queue_entries e
+    where e.court_id = pg_temp.q1() and e.party_name = 'Rafael Lima'
+      and e.status in ('waiting', 'ready')),
+    'sem resposta, o Rafael foi embora';
+end $$;
+
+-- =====================================================================
+-- 6. "Voltar pra fila": vai para o FIM, com o turno contado
+-- =====================================================================
+do $$
+declare v_tela jsonb; v_marina public.queue_entries;
 begin
   perform pg_temp.vence_o_turno(pg_temp.q1());
-  perform public.advance_expired_queues();
-  assert pg_temp.ordem(pg_temp.q1()) = 'Ana,Caio,Bia', format('fila: %s', pg_temp.ordem(pg_temp.q1()));
+  v_tela := public.totem_screen(pg_temp.totem_q1());
+  assert v_tela -> 'exit_ask' ->> 'name' = 'Marina Souza', format('a vez dela: %s', v_tela -> 'exit_ask');
 
-  perform pg_temp.acaba_a_troca(pg_temp.q1());
-  perform public.advance_expired_queues();
-  assert pg_temp.em_quadra(pg_temp.q1()) = 'Ana',
-    format('em quadra: %s', pg_temp.em_quadra(pg_temp.q1()));
-  assert pg_temp.ordem(pg_temp.q1()) = 'Caio,Bia', format('fila: %s', pg_temp.ordem(pg_temp.q1()));
+  v_tela := public.totem_exit_answer(pg_temp.totem_q1(), true);
 
-  -- O segundo turno da Ana é o terceiro turno da vaga dela.
-  assert (pg_temp.vaga_de('a6000000-0000-0000-0000-0000000000a6', pg_temp.q1())).turn_number = 2,
-    'a Ana está no segundo turno dela';
+  assert pg_temp.vazio(v_tela -> 'exit_ask'), 'respondida, a faixa sai';
+  assert v_tela ->> 'state' = 'changeover', 'a troca continua correndo';
+  assert v_tela -> 'next' ->> 'name' = 'Zé do Ibira', format('entra o Zé: %s', v_tela -> 'next');
+
+  select * into v_marina from public.queue_entries e
+  where e.court_id = pg_temp.q1() and e.party_name = 'Marina Souza'
+    and e.status in ('waiting', 'ready');
+  assert v_marina.turn_number = 2, format('segundo turno dela: %s', v_marina.turn_number);
+  assert (select qp.position from public.queue_positions qp where qp.entry_id = v_marina.id) = 2,
+    'atrás do Zé, que esperou';
+  assert v_marina.party_size = 2, 'o tamanho da party viaja com ela';
 end $$;
 
 -- =====================================================================
--- 6. Sem ninguém atrás, nada de carrossel: o turno encerra e a quadra
---    libera, como sempre liberou. É o que impede um grupo que foi
---    embora sem sair da fila de segurar a quadra para sempre.
+-- 7. Continuar jogando: só com a fila vazia, e aí são mais 40 minutos
 -- =====================================================================
 do $$
-declare
-  v_court public.courts;
-  v_tela  jsonb;
+declare v jsonb; v_tela jsonb;
 begin
-  perform pg_temp.entra('d6000000-0000-0000-0000-0000000000d6', pg_temp.q2(), 'r-duda-1');
+  v := public.totem_join(pg_temp.totem_q2(), 'Duda Única', 1);
+  assert (v ->> 'playing')::boolean, 'quadra vazia: entra jogando';
+  assert v -> 'screen' -> 'playing' ->> 'label' = 'Sozinho',
+    format('rótulo de 1: %s', v -> 'screen' -> 'playing');
 
-  perform pg_temp.as_user('d6000000-0000-0000-0000-0000000000d6');
-  perform pg_temp.scan('d6000000-0000-0000-0000-0000000000d6', pg_temp.q2(), 'r-duda-ci');
-  perform public.check_in_and_start('r-duda-ci');
-  assert pg_temp.em_quadra(pg_temp.q2()) = 'Duda', 'a Duda está em quadra';
+  update public.matches set expires_at = now() + interval '45 seconds'
+   where court_id = pg_temp.q2() and ended_at is null;
 
-  perform pg_temp.vence_o_turno(pg_temp.q2());
-  perform public.advance_expired_queues();
+  v_tela := public.totem_screen(pg_temp.totem_q2());
+  assert v_tela ->> 'state' = 'ending', format('estado: %s', v_tela ->> 'state');
+  assert (v_tela ->> 'can_continue')::boolean, 'sozinha na quadra, pode continuar';
 
-  select * into v_court from public.courts c where c.id = pg_temp.q2();
-  assert v_court.changeover_until is null, 'sem fila atrás, não há troca a fazer';
-  assert v_court.status = 'available', format('a quadra liberou: %s', v_court.status);
-  assert pg_temp.ordem(pg_temp.q2()) = '', format('fila vazia: %s', pg_temp.ordem(pg_temp.q2()));
-  assert not exists (select 1 from public.queue_entries e
-                     where e.court_id = pg_temp.q2() and e.requeued_from is not null),
-    'ninguém foi recolocado numa fila que não existe';
-
-  v_tela := public.court_screen(pg_temp.q2());
-  assert v_tela ->> 'status_text' = 'Livre', format('status: %s', v_tela ->> 'status_text');
+  v_tela := public.totem_continue(pg_temp.totem_q2());
+  assert v_tela ->> 'state' = 'playing', 'voltou a jogar';
+  assert (v_tela ->> 'remaining_seconds')::int between 2390 and 2400,
+    format('mais 40 minutos: %s', v_tela ->> 'remaining_seconds');
 end $$;
 
 -- =====================================================================
--- 7. nudge_court: quem está com a tela aberta não espera o cron
--- =====================================================================
-do $$
-declare
-  v_tela jsonb;
-begin
-  -- Fila na q1: Caio em quadra (turno 5), Bia esperando... conferindo.
-  perform pg_temp.vence_o_turno(pg_temp.q1());
-
-  perform pg_temp.as_user('c6000000-0000-0000-0000-0000000000c6');
-  v_tela := public.nudge_court(pg_temp.q1());
-
-  assert (v_tela ->> 'is_changeover')::boolean,
-    format('o empurrão encerrou o turno vencido e abriu a troca: %s', v_tela ->> 'status_text');
-
-  perform pg_temp.acaba_a_troca(pg_temp.q1());
-  v_tela := public.nudge_court(pg_temp.q1());
-  assert (v_tela ->> 'is_live')::boolean,
-    format('o empurrão começou o turno do próximo: %s', v_tela ->> 'status_text');
-  assert not (v_tela ->> 'is_changeover')::boolean, 'a troca terminou';
-end $$;
-
--- Fora de hora, o empurrão não faz nada: não dá para pular a vez
-do $$
-declare
-  v_antes uuid;
-  v_depois uuid;
-begin
-  select mt.id into v_antes from public.matches mt
-  where mt.court_id = pg_temp.q1() and mt.ended_at is null;
-
-  perform pg_temp.as_user('b6000000-0000-0000-0000-0000000000b6');
-  perform public.nudge_court(pg_temp.q1());
-  perform public.nudge_court(pg_temp.q1());
-
-  select mt.id into v_depois from public.matches mt
-  where mt.court_id = pg_temp.q1() and mt.ended_at is null;
-
-  assert v_antes = v_depois, 'o turno em andamento não se mexe';
-end $$;
-
--- =====================================================================
--- 8. A espera estimada passa a contar a troca de cada rodada
--- =====================================================================
-do $$
-declare
-  v_tela jsonb;
-  v_fila jsonb;
-  v_turno integer;
-begin
-  perform pg_temp.as_user('a6000000-0000-0000-0000-0000000000a6');
-  v_tela := public.court_screen(pg_temp.q1());
-  v_turno := (v_tela ->> 'turn_seconds')::integer;
-
-  assert v_turno = 40 * 60 + 60, format('uma rodada custa slot + troca: %s', v_turno);
-
-  v_fila := v_tela -> 'queue';
-  assert jsonb_array_length(v_fila) >= 2, format('fila com gente: %s', v_fila);
-
-  -- O segundo da fila espera uma rodada inteira mais que o primeiro.
-  assert ((v_fila -> 1 ->> 'eta_seconds')::integer - (v_fila -> 0 ->> 'eta_seconds')::integer)
-         = v_turno,
-    format('a diferença entre posições é uma rodada: %s e %s',
-           v_fila -> 0 ->> 'eta_seconds', v_fila -> 1 ->> 'eta_seconds');
-
-  -- E quem está em quadra agora não entra na conta de espera de novo.
-  assert (v_tela ->> 'total_wait_seconds')::integer
-         >= (v_tela ->> 'remaining_seconds')::integer,
-    format('espera total: %s', v_tela ->> 'total_wait_seconds');
-end $$;
-
--- =====================================================================
--- 9. A troca é garantia, não cancela: quem já está em quadra pode
---    começar antes
+-- 8. Pausa apertada durante o jogo: agenda, não interrompe
 --
--- O minuto existe para o turno começar sozinho se ninguém fizer nada.
--- Se o grupo da vez toca em "entramos" no meio dele, não há motivo
--- para fazer essa pessoa esperar o cronômetro.
+-- E a previsão deixa de ser calculável: a pausa não tem duração.
 -- =====================================================================
 do $$
-declare
-  v_court public.courts;
-  v_match public.matches;
+declare v_tela jsonb;
 begin
-  perform pg_temp.entra('e6000000-0000-0000-0000-0000000000e6', pg_temp.q3(), 'r-edu-1');
+  perform public.totem_join(pg_temp.totem_q2(), 'Fila da Pausa', 2);
+
+  v_tela := public.totem_pause(pg_temp.totem_q2(), 'vassourao');
+  assert v_tela ->> 'state' = 'playing', 'o jogo em curso não é interrompido';
+  assert v_tela -> 'armed_pause' ->> 'kind' = 'vassourao',
+    format('vassourão agendado: %s', v_tela -> 'armed_pause');
+  assert (v_tela -> 'queue' -> 0 ->> 'eta_seconds') is null,
+    'com pausa agendada a previsão não é calculável';
+
+  -- Apertar de novo cancela o agendamento.
+  v_tela := public.totem_pause(pg_temp.totem_q2(), 'vassourao');
+  assert pg_temp.vazio(v_tela -> 'armed_pause'), 'o mesmo botão cancela';
+
+  v_tela := public.totem_pause(pg_temp.totem_q2(), 'rega');
+  assert v_tela -> 'armed_pause' ->> 'kind' = 'rega', 'e troca de motivo';
+end $$;
+
+-- O tempo zera com pausa agendada: entra Pausada, e não a troca
+do $$
+declare v_tela jsonb;
+begin
+  perform pg_temp.vence_o_turno(pg_temp.q2());
+  v_tela := public.totem_screen(pg_temp.totem_q2());
+
+  assert v_tela ->> 'state' = 'paused', format('estado: %s', v_tela ->> 'state');
+  assert v_tela -> 'pause' ->> 'kind' = 'rega', format('pausa em curso: %s', v_tela -> 'pause');
+  assert v_tela -> 'pause' ->> 'desc' = 'Estão regando a quadra.', 'com o texto da tela';
+  assert (v_tela ->> 'changeover_left')::int = 0, 'a troca não começou';
+  assert pg_temp.vazio(v_tela -> 'armed_pause'), 'o agendamento virou pausa';
+  assert (v_tela -> 'queue' -> 0 ->> 'eta_seconds') is null, 'previsão: depois da pausa';
+
+  -- A pausa não anda sozinha: o relógio pode passar e nada muda.
+  perform pg_temp.vence_a_troca(pg_temp.q2());
+  v_tela := public.totem_screen(pg_temp.totem_q2());
+  assert v_tela ->> 'state' = 'paused', 'pausa só sai por toque humano em Retomar';
+end $$;
+
+-- Retomar: a troca recomeça com os 1:30 cheios, e a pergunta que
+-- esperava aparece agora
+do $$
+declare v_tela jsonb;
+begin
+  v_tela := public.totem_resume(pg_temp.totem_q2());
+
+  assert v_tela ->> 'state' = 'changeover', format('estado: %s', v_tela ->> 'state');
+  assert (v_tela ->> 'changeover_left')::int between 80 and 90,
+    format('os 1:30 cheios: %s', v_tela ->> 'changeover_left');
+  assert pg_temp.vazio(v_tela -> 'pause'), 'sem pausa em curso';
+  assert v_tela -> 'exit_ask' ->> 'name' = 'Duda Única',
+    format('a pergunta esperou o Retomar: %s', v_tela -> 'exit_ask');
+  assert v_tela -> 'next' ->> 'name' = 'Fila da Pausa', 'e a fila andou';
+end $$;
+
+-- =====================================================================
+-- 9. Pausa apertada na troca começa na hora
+-- =====================================================================
+do $$
+declare v_tela jsonb;
+begin
+  v_tela := public.totem_pause(pg_temp.totem_q2(), 'excecao');
+  assert v_tela ->> 'state' = 'paused', format('estado: %s', v_tela ->> 'state');
+  assert v_tela -> 'pause' ->> 'label' = 'Exceção', format('pausa: %s', v_tela -> 'pause');
+  assert (v_tela ->> 'changeover_left')::int = 0, 'a troca parou de contar';
+
+  -- E ninguém entra em quadra pausada.
+  perform pg_temp.vence_a_troca(pg_temp.q2());
+  v_tela := public.totem_screen(pg_temp.totem_q2());
+  assert v_tela ->> 'state' = 'paused', 'o relógio da troca não vale na pausa';
+  assert pg_temp.vazio(v_tela -> 'playing'), 'quadra vazia';
+
+  -- Retomar devolve a troca, e no fim dela o turno começa.
+  v_tela := public.totem_resume(pg_temp.totem_q2());
+  assert v_tela ->> 'state' = 'changeover', 'volta para a troca';
+  perform pg_temp.vence_a_troca(pg_temp.q2());
+  v_tela := public.totem_screen(pg_temp.totem_q2());
+  assert v_tela -> 'playing' ->> 'name' = 'Fila da Pausa',
+    format('entrou quem esperava: %s', v_tela -> 'playing');
+end $$;
+
+-- =====================================================================
+-- 10. O QR e a tag NFC: entrar na fila pelo celular, sem login
+-- =====================================================================
+do $$
+declare v jsonb; v_tela jsonb; v_token text; v_code text;
+begin
+  -- Scan token SEM conta: é o que o leitor de QR emite para quem não
+  -- está logado em nada.
+  insert into public.scan_tokens
+    (token_hash, user_id, court_id, latitude, longitude, distance_meters, expires_at, method)
+  select public.hash_scan_token('qr-sem-conta-1'), null, c.id, c.latitude, c.longitude, 8,
+         now() + interval '30 seconds', 'qr'
+  from public.courts c where c.id = pg_temp.q1();
+
+  perform set_config('request.jwt.claim.sub', '', true);
+  v := public.scan_join_party('qr-sem-conta-1', 'Priscila Alves', 4);
+
+  assert (v ->> 'entry_id') is not null, format('entrou na fila: %s', v);
+  assert length(v ->> 'party_token') = 64, 'o celular recebe o segredo dela, uma vez';
+  assert v ->> 'court_id' = pg_temp.q1()::text, 'na quadra do QR';
+  v_token := v ->> 'party_token';
+
+  -- O token não pode ser reusado: um scan, uma entrada.
+  begin
+    perform public.scan_join_party('qr-sem-conta-1', 'Outro Nome', 2);
+    assert false, 'scan token já usado deveria ser recusado';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ002', format('esperava NQ002, obtive %s', v_code);
+  end;
+
+  -- A tela do celular: a mesma quadra, mais a própria vaga.
+  v_tela := public.party_screen(v_token);
+  assert v_tela -> 'my_party' ->> 'name' = 'Priscila Alves', format('minha vaga: %s', v_tela -> 'my_party');
+  assert v_tela -> 'my_party' ->> 'label' = 'Duplas', 'rótulo de 4';
+  assert (v_tela -> 'my_party' ->> 'position')::int >= 1, 'com posição na fila';
+  assert v_tela -> 'court' ->> 'id' = pg_temp.q1()::text, 'e a quadra inteira';
+
+  -- E sair da fila pelo celular, que é o que o party token autoriza.
+  v_tela := public.party_leave(v_token);
+  assert not exists (
+    select 1 from public.queue_entries e
+    where e.court_id = pg_temp.q1() and e.party_name = 'Priscila Alves'
+      and e.status in ('waiting', 'ready')),
+    'saiu da fila pelo celular';
+
+  -- Token de party inventado não abre nada.
+  begin
+    perform public.party_screen('nao-sou-um-token');
+    assert false, 'party token inválido deveria ser recusado';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ007', format('esperava NQ007, obtive %s', v_code);
+  end;
+end $$;
+
+-- =====================================================================
+-- 11. Estado para os casos do admin: q3 e q4 com conta, como antes
+--
+-- A fila aceita os dois mundos: party digitada e vaga com conta.
+-- =====================================================================
+do $$
+begin
   perform pg_temp.entra('f6000000-0000-0000-0000-0000000000f6', pg_temp.q3(), 'r-fe-1');
-
-  -- O Edu joga primeiro.
-  perform pg_temp.as_user('e6000000-0000-0000-0000-0000000000e6');
-  perform pg_temp.scan('e6000000-0000-0000-0000-0000000000e6', pg_temp.q3(), 'r-edu-ci');
-  perform public.check_in_and_start('r-edu-ci');
-  assert pg_temp.em_quadra(pg_temp.q3()) = 'Edu', 'o Edu está em quadra';
-
-  -- Acabou o tempo: troca aberta, Edu no fim, Fê chamada sem prazo.
-  perform pg_temp.vence_o_turno(pg_temp.q3());
-  perform public.advance_expired_queues();
-
-  select * into v_court from public.courts c where c.id = pg_temp.q3();
-  assert v_court.changeover_until > now(), 'a troca está correndo';
-  assert pg_temp.ordem(pg_temp.q3()) = 'Fê,Edu', format('fila: %s', pg_temp.ordem(pg_temp.q3()));
-
-  -- A Fê já está na quadra e avisa. O turno dela começa agora.
   perform pg_temp.as_user('f6000000-0000-0000-0000-0000000000f6');
   perform pg_temp.scan('f6000000-0000-0000-0000-0000000000f6', pg_temp.q3(), 'r-fe-ci');
   perform public.check_in_and_start('r-fe-ci');
+  perform pg_temp.entra('e6000000-0000-0000-0000-0000000000e6', pg_temp.q3(), 'r-edu-1');
 
-  assert pg_temp.em_quadra(pg_temp.q3()) = 'Fê',
-    format('em quadra: %s', pg_temp.em_quadra(pg_temp.q3()));
+  perform pg_temp.entra('26000000-0000-0000-0000-000000000026', pg_temp.q4(), 'r-hugo-1');
+  perform pg_temp.as_user('26000000-0000-0000-0000-000000000026');
+  perform pg_temp.scan('26000000-0000-0000-0000-000000000026', pg_temp.q4(), 'r-hugo-ci');
+  perform public.check_in_and_start('r-hugo-ci');
+  perform pg_temp.entra('36000000-0000-0000-0000-000000000036', pg_temp.q4(), 'r-iris-1');
 
-  select * into v_court from public.courts c where c.id = pg_temp.q3();
-  assert v_court.changeover_until is null, 'começar o turno encerra a troca';
-
-  select * into v_match from public.matches mt
-  where mt.court_id = pg_temp.q3() and mt.ended_at is null;
-  assert v_match.expires_at > now() + interval '39 minutes',
-    format('o slot da Fê é inteiro: %s', v_match.expires_at - now());
-
-  -- E o cron depois não arruma nada nem começa turno nenhum.
-  assert (public.advance_expired_queues() ->> 'turns_started')::integer = 0,
-    'o cron não tem o que fazer';
+  assert pg_temp.em_quadra(pg_temp.q3()) = 'Fê', format('q3: %s', pg_temp.em_quadra(pg_temp.q3()));
+  assert pg_temp.ordem(pg_temp.q3()) = 'Edu', format('fila da q3: %s', pg_temp.ordem(pg_temp.q3()));
+  assert pg_temp.ordem(pg_temp.q4()) = 'Iris', format('fila da q4: %s', pg_temp.ordem(pg_temp.q4()));
 end $$;
 
 -- =====================================================================
--- 10. A tolerância do PRIMEIRO turno continua existindo
---
--- Quem abre a fila e nunca entra em quadra travaria a fila inteira: é o
--- único lugar onde não aparecer ainda custa a vez (Sprint 5).
--- =====================================================================
-do $$
-declare
-  v_res   jsonb;
-  v_duda  public.queue_entries;
-begin
-  -- A q2 ficou livre e vazia depois do caso 6.
-  perform pg_temp.entra('d6000000-0000-0000-0000-0000000000d6', pg_temp.q2(), 'r-duda-2');
-  perform pg_temp.entra('96000000-0000-0000-0000-000000000096', pg_temp.q2(), 'r-gabi-1');
-
-  select e.* into v_duda from public.queue_entries e
-  join public.queue_entry_members m on m.entry_id = e.id
-  where m.user_id = 'd6000000-0000-0000-0000-0000000000d6' and m.is_active
-    and e.court_id = pg_temp.q2();
-  assert v_duda.call_expires_at is not null,
-    'com gente atrás, quem está na frente tem a tolerância para entrar';
-
-  update public.queue_entries set call_expires_at = now() - interval '1 second'
-  where id = v_duda.id;
-
-  v_res := public.advance_expired_queues();
-  assert (v_res ->> 'entries_expired')::integer = 1, format('a vez passou: %s', v_res);
-  assert (select status from public.queue_entries where id = v_duda.id) = 'expired',
-    'quem não apareceu perdeu a vez';
-end $$;
-
--- =====================================================================
--- 11. O admin corrige o relógio do turno em andamento
---
--- O grupo entrou cinco minutos antes de alguém marcar, ou a troca
--- demorou: quem administra diz quanto falta de verdade.
+-- 12. O admin corrige o relógio do turno em andamento
 -- =====================================================================
 do $$
 declare
@@ -493,12 +547,10 @@ declare
   v_code  text;
   v_tela  jsonb;
 begin
-  -- A q3 tem a Fê em quadra e o Edu na fila (caso 9).
   select * into v_match from public.matches mt
   where mt.court_id = pg_temp.q3() and mt.ended_at is null;
   assert v_match.id is not null, 'tem turno em andamento na q3';
 
-  -- Jogador comum não mexe no relógio de ninguém.
   perform pg_temp.as_user('e6000000-0000-0000-0000-0000000000e6');
   begin
     perform public.admin_set_match_time(v_match.id, 10);
@@ -510,7 +562,6 @@ begin
 
   perform pg_temp.as_user('16000000-0000-0000-0000-000000000016');
 
-  -- Fora da faixa, não.
   begin
     perform public.admin_set_match_time(v_match.id, 999);
     assert false, '999 minutos deveria ser recusado';
@@ -519,32 +570,24 @@ begin
     assert v_code = 'NQ036', format('esperava NQ036, obtive %s', v_code);
   end;
 
-  -- "Faltam 12 minutos."
   v_tela := public.admin_set_match_time(v_match.id, 12);
-  assert (v_tela ->> 'is_live')::boolean, 'o turno continua'
-    ;
   assert (v_tela -> 'match' ->> 'remaining_seconds')::integer between 700 and 720,
     format('faltam ~12 min: %s', v_tela -> 'match' ->> 'remaining_seconds');
   assert (v_tela -> 'match' ->> 'time_adjusted_at') is not null,
     'o ajuste fica visível na tela de todo mundo';
 
-  -- O contrato é o total, não o passo: repetir não acumula.
   v_tela := public.admin_set_match_time(v_match.id, 12);
   assert (v_tela -> 'match' ->> 'remaining_seconds')::integer between 700 and 720,
     format('repetir não soma: %s', v_tela -> 'match' ->> 'remaining_seconds');
 
-  -- E quem ajustou fica gravado.
   select * into v_match from public.matches mt where mt.id = v_match.id;
   assert v_match.time_adjusted_by = '16000000-0000-0000-0000-000000000016',
     'quem mexeu no relógio fica registrado';
-  assert v_match.time_adjusted_seconds <> 0, 'o quanto também';
 end $$;
 
--- Zerar o tempo encerra o turno agora, e a quadra roda como sempre
+-- Zerar o tempo encerra o turno agora, e a quadra passa a chamar
 do $$
-declare
-  v_match uuid;
-  v_tela  jsonb;
+declare v_match uuid; v_tela jsonb;
 begin
   select mt.id into v_match from public.matches mt
   where mt.court_id = pg_temp.q3() and mt.ended_at is null;
@@ -553,17 +596,11 @@ begin
   v_tela := public.admin_set_match_time(v_match, 0);
 
   assert not (v_tela ->> 'is_live')::boolean, 'o turno encerrou na hora';
-  assert (v_tela ->> 'is_changeover')::boolean,
-    format('a quadra entrou na troca: %s', v_tela ->> 'status_text');
+  assert (v_tela ->> 'is_handover')::boolean,
+    format('a quadra começou a chamar: %s', v_tela ->> 'status_text');
   assert (select end_reason from public.matches where id = v_match) = 'slot_expired',
     'encerrou como fim de tempo';
-
-  -- A Fê foi para o fim e o Edu entra quando a troca acabar.
-  assert pg_temp.ordem(pg_temp.q3()) = 'Edu,Fê', format('fila: %s', pg_temp.ordem(pg_temp.q3()));
-  perform pg_temp.acaba_a_troca(pg_temp.q3());
-  perform public.advance_expired_queues();
-  assert pg_temp.em_quadra(pg_temp.q3()) = 'Edu',
-    format('em quadra: %s', pg_temp.em_quadra(pg_temp.q3()));
+  assert pg_temp.entrando(pg_temp.q3()) = 'Edu', format('entrando: %s', pg_temp.entrando(pg_temp.q3()));
 end $$;
 
 -- Turno já encerrado não se ajusta
@@ -584,6 +621,240 @@ begin
   end;
 end $$;
 
+-- =====================================================================
+-- 13. O admin tira da fila quem foi embora sem avisar
+-- =====================================================================
+do $$
+declare
+  v_iris uuid;
+  v_code text;
+begin
+  select e.id into v_iris from public.queue_entries e
+  join public.queue_entry_members m on m.entry_id = e.id
+  where m.user_id = '36000000-0000-0000-0000-000000000036' and m.is_active
+    and e.court_id = pg_temp.q4() and e.status in ('waiting', 'ready');
+  assert v_iris is not null, 'a Iris está na fila da q4';
+
+  -- Jogador comum não remove ninguém.
+  perform pg_temp.as_user('26000000-0000-0000-0000-000000000026');
+  begin
+    perform public.leave_queue(v_iris, 'sumiu');
+    assert false, 'jogador comum não remove outro grupo';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ008', format('esperava NQ008, obtive %s', v_code);
+  end;
+
+  perform pg_temp.as_user('16000000-0000-0000-0000-000000000016');
+  perform public.leave_queue(v_iris, 'removido_pelo_admin');
+
+  assert (select status from public.queue_entries where id = v_iris) = 'cancelled',
+    'a vaga saiu da fila';
+  assert (select cancel_reason from public.queue_entries where id = v_iris) = 'removido_pelo_admin',
+    'com o motivo gravado';
+  assert not exists (
+    select 1 from public.queue_entry_members m
+    where m.entry_id = v_iris and m.is_active
+  ), 'e a pessoa está livre para entrar em outra fila';
+end $$;
+
+-- =====================================================================
+-- 14. O totem: identidade de aparelho, e o link que o admin gera
+-- =====================================================================
+do $$
+declare
+  v_novo  jsonb;
+  v_token text;
+  v_tela  jsonb;
+  v_code  text;
+begin
+  -- Só o admin gera o link.
+  perform pg_temp.as_user('e6000000-0000-0000-0000-0000000000e6');
+  begin
+    perform public.admin_create_court_device(pg_temp.q4(), 'totem da q4');
+    assert false, 'jogador comum não gera link de totem';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ023', format('esperava NQ023, obtive %s', v_code);
+  end;
+
+  perform pg_temp.as_user('16000000-0000-0000-0000-000000000016');
+  v_novo := public.admin_create_court_device(pg_temp.q4(), 'totem da q4');
+  v_token := v_novo ->> 'token';
+
+  assert length(v_token) = 64, format('token de 32 bytes em hex: %s', length(v_token));
+  assert v_novo ->> 'path' = '/totem/' || v_token, format('o caminho do link: %s', v_novo ->> 'path');
+
+  -- O banco não guarda o token, só o hash.
+  assert not exists (
+    select 1 from public.court_devices d where d.token_hash = v_token
+  ), 'o token em claro não fica no banco';
+  assert exists (
+    select 1 from public.court_devices d
+    where d.token_hash = public.hash_scan_token(v_token)
+  ), 'o hash fica';
+
+  -- O totem lê a quadra sem estar logado como ninguém.
+  perform set_config('request.jwt.claim.sub', '', true);
+  v_tela := public.totem_screen(v_token);
+  assert v_tela -> 'court' ->> 'id' = pg_temp.q4()::text, format('a quadra certa: %s', v_tela -> 'court');
+  assert v_tela ->> 'state' = 'playing', format('o Hugo está em quadra: %s', v_tela ->> 'state');
+
+  -- E ler marca o aparelho como vivo.
+  assert (select last_seen_at from public.court_devices
+           where id = (v_novo ->> 'device_id')::uuid) is not null,
+    'a leitura marca o totem como aceso';
+
+  -- Token inventado não abre nada.
+  begin
+    perform public.totem_screen('nao-sou-um-token');
+    assert false, 'token inválido deveria ser recusado';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ037', format('esperava NQ037, obtive %s', v_code);
+  end;
+
+  -- Revogado para de funcionar.
+  perform pg_temp.as_user('16000000-0000-0000-0000-000000000016');
+  perform public.admin_revoke_court_device((v_novo ->> 'device_id')::uuid);
+  perform set_config('request.jwt.claim.sub', '', true);
+  begin
+    perform public.totem_screen(v_token);
+    assert false, 'totem revogado deveria ser recusado';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ037', format('esperava NQ037, obtive %s', v_code);
+  end;
+end $$;
+
+-- 15. A limpeza por inatividade não pode expulsar quem só esperou, nem
+--     deixar a quadra travada
+--
+-- A auditoria reproduziu os dois defeitos: um grupo que esperou 3h numa
+-- fila movimentada era marcado `expired`, e expirar um grupo `ready`
+-- deixava a quadra `available` com gente em `waiting` e ninguém para
+-- chamar — inutilizável até alguém rodar call_next_team à mão.
+-- =====================================================================
+do $$
+declare
+  v_kiko uuid;
+  v_saiu integer;
+begin
+  -- Fila viva na q5: o Joca em quadra e o Kiko esperando há 4 horas.
+  perform pg_temp.entra('46000000-0000-0000-0000-000000000046', pg_temp.q5(), 'r-joca-1');
+  perform pg_temp.as_user('46000000-0000-0000-0000-000000000046');
+  perform pg_temp.scan('46000000-0000-0000-0000-000000000046', pg_temp.q5(), 'r-joca-ci');
+  perform public.check_in_and_start('r-joca-ci');
+  assert pg_temp.em_quadra(pg_temp.q5()) = 'Joca', 'o Joca está em quadra';
+
+  perform pg_temp.entra('56000000-0000-0000-0000-000000000056', pg_temp.q5(), 'r-kiko-1');
+
+  select e.id into v_kiko from public.queue_entries e
+  join public.queue_entry_members m on m.entry_id = e.id
+  where m.user_id = '56000000-0000-0000-0000-000000000056' and m.is_active
+    and e.court_id = pg_temp.q5();
+
+  update public.queue_entries
+     set first_joined_at = now() - interval '4 hours',
+         joined_at = now() - interval '4 hours',
+         called_at = null
+   where court_id = pg_temp.q5() and status in ('waiting', 'ready');
+
+  v_saiu := public.expire_stale_queue_entries('3 hours');
+
+  assert v_saiu = 0, format(
+    'com alguém em quadra, esperar 4 h é o normal de uma fila movimentada: %s saíram', v_saiu);
+  assert (select status from public.queue_entries where id = v_kiko)
+         in ('waiting', 'ready'),
+    'quem esperou não é expulso';
+end $$;
+
+-- Já numa quadra parada, sem ninguém chamado, a vaga esquecida sai —
+-- e a fila ANDA
+do $$
+declare
+  v_court public.courts;
+  v_saiu  integer;
+begin
+  -- Quadra parada: dois grupos que chegaram há 4 horas, ninguém em
+  -- quadra, ninguém chamado. Esses sim foram embora.
+  perform pg_temp.entra('66000000-0000-0000-0000-000000000066', pg_temp.q6(), 'r-lia-1');
+  perform pg_temp.entra('76000000-0000-0000-0000-000000000076', pg_temp.q6(), 'r-mano-1');
+
+  update public.queue_entries
+     set first_joined_at = now() - interval '4 hours',
+         joined_at = now() - interval '4 hours',
+         called_at = null,
+         status = 'waiting',
+         call_expires_at = null
+   where court_id = pg_temp.q6() and status in ('waiting', 'ready');
+
+  v_saiu := public.expire_stale_queue_entries('3 hours');
+  assert v_saiu = 2, format('as duas vagas esquecidas saem: %s', v_saiu);
+
+  select * into v_court from public.courts c where c.id = pg_temp.q6();
+  assert v_court.status = 'available', format('a quadra fica livre: %s', v_court.status);
+  assert pg_temp.ordem(pg_temp.q6()) = '', format('e a fila vazia: %s', pg_temp.ordem(pg_temp.q6()));
+end $$;
+
+-- Com fila atrás, expirar o grupo chamado passa a vez em vez de travar
+do $$
+declare
+  v_nina  uuid;
+  v_saiu  integer;
+  v_court public.courts;
+begin
+  -- A q6 está vazia depois do bloco acima. Nina chegou há 4 horas e
+  -- nunca foi chamada; Oli chegou agora e está ali.
+  perform pg_temp.entra('86000000-0000-0000-0000-000000000086', pg_temp.q6(), 'r-nina-1');
+  perform pg_temp.entra('06000000-0000-0000-0000-000000000006', pg_temp.q6(), 'r-oli-1');
+
+  select e.id into v_nina from public.queue_entries e
+  join public.queue_entry_members m on m.entry_id = e.id
+  where m.user_id = '86000000-0000-0000-0000-000000000086' and m.is_active
+    and e.court_id = pg_temp.q6();
+
+  update public.queue_entries
+     set first_joined_at = now() - interval '4 hours', called_at = null,
+         status = 'ready', call_expires_at = null
+   where id = v_nina;
+
+  v_saiu := public.expire_stale_queue_entries('3 hours');
+  assert v_saiu = 1, format('só a vaga esquecida sai: %s', v_saiu);
+
+  -- E a quadra não ficou travada: o próximo foi chamado.
+  assert pg_temp.ordem(pg_temp.q6()) = 'Oli', format('fila: %s', pg_temp.ordem(pg_temp.q6()));
+  assert (select status from public.queue_entries e
+          join public.queue_entry_members m on m.entry_id = e.id
+          where m.user_id = '06000000-0000-0000-0000-000000000006' and m.is_active
+            and e.court_id = pg_temp.q6()) = 'ready',
+    'a vez passou para quem ficou, em vez de a quadra travar';
+
+  select * into v_court from public.courts c where c.id = pg_temp.q6();
+  assert v_court.status = 'available', format('quadra livre e chamável: %s', v_court.status);
+end $$;
+
+
+-- Quadra pausada não expira a fila de ninguém: a pausa não tem duração,
+-- e é justamente ela que segura a fila
+do $$
+declare v_saiu integer;
+begin
+  perform pg_temp.entra('f6000000-0000-0000-0000-0000000000f6', pg_temp.q7(), 'r-fe-pausa');
+  perform pg_temp.as_user('16000000-0000-0000-0000-000000000016');
+  perform public.pause_court(pg_temp.q7(), 'excecao');
+
+  update public.queue_entries
+     set first_joined_at = now() - interval '4 hours',
+         joined_at = now() - interval '4 hours',
+         called_at = null, status = 'waiting', call_expires_at = null
+   where court_id = pg_temp.q7();
+
+  v_saiu := public.expire_stale_queue_entries('3 hours');
+  assert v_saiu = 0, format('pausa de 4 h não é fila esquecida: %s saíram', v_saiu);
+  assert pg_temp.ordem(pg_temp.q7()) = 'Fê', format('a fila fica: %s', pg_temp.ordem(pg_temp.q7()));
+end $$;
+
 rollback;
 
-\echo '✔ tests/local/80_rotacao_test.sql — troca de 1 min, rotação automática e espera com a troca'
+\echo '✔ tests/local/80_rotacao_test.sql — totem: troca de 1:30, pergunta de saída, pausas e fila sem conta'

@@ -2,7 +2,12 @@
  * POST /functions/v1/scan-court   (US-02)
  *
  * Valida o QR Code escaneado + a localização do jogador e devolve um
- * scan token de uso único (TTL 30s) que habilita `join-queue`.
+ * scan token de uso único (TTL 30s).
+ *
+ * Com conta, ele habilita `join-queue`. SEM conta — o caminho normal
+ * desde o totem — ele habilita `scan_join_party`, que entra na fila com
+ * nome e sobrenome digitados. O que o token prova é posse do código
+ * impresso na quadra, não quem a pessoa é.
  *
  * Body:  { payload?, courtId?, latitude, longitude, accuracy?, method?, purpose? }
  *   method  "qr" (padrão) | "nfc" | "gps"
@@ -31,7 +36,7 @@ import {
   hashScanToken,
   SCAN_TOKEN_TTL_SECONDS,
 } from "../_shared/tokens.ts";
-import { requireUser, serviceClient } from "../_shared/supabase.ts";
+import { optionalUser, serviceClient } from "../_shared/supabase.ts";
 import type { CourtRow } from "../_shared/types.ts";
 
 type ScanMethod = "qr" | "nfc" | "gps";
@@ -65,7 +70,10 @@ interface ScanRequest {
 serve(async (req) => {
   requireMethod(req, "POST");
 
-  const { user } = await requireUser(req);
+  // Sem conta é o caminho normal: quem escaneia o QR da placa não fez
+  // login em nada. O token emitido aqui é que autoriza a escrita, e ele
+  // vale 30 segundos.
+  const user = await optionalUser(req);
   const body = await readJson<ScanRequest>(req);
 
   // O totem NFC grava a mesma URL assinada do QR: só muda o caminho
@@ -222,7 +230,7 @@ serve(async (req) => {
       await admin.from("pilot_events").insert({
         court_id: court.id,
         invite_id: invite.id,
-        user_id: user.id,
+        user_id: user?.id ?? null,
         event: "invite_too_far",
         distance_meters: distanceMeters,
       });
@@ -247,7 +255,7 @@ serve(async (req) => {
 
   const { error: insertError } = await admin.from("scan_tokens").insert({
     token_hash: await hashScanToken(token),
-    user_id: user.id,
+    user_id: user?.id ?? null,
     court_id: court.id,
     latitude: position.latitude,
     longitude: position.longitude,
@@ -264,7 +272,7 @@ serve(async (req) => {
     await admin.from("pilot_events").insert({
       court_id: court.id,
       invite_id: invite.id,
-      user_id: user.id,
+      user_id: user?.id ?? null,
       event: "invite_scanned",
       distance_meters: distanceMeters,
     });

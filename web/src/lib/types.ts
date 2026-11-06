@@ -82,6 +82,8 @@ export interface QueueItem {
   eta_seconds: number;
   /** Quantos turnos este grupo já tem na sequência: 2 ou mais = já jogou e voltou para o fim. */
   turn_number?: number;
+  /** É este grupo que a quadra está chamando agora. */
+  is_being_called?: boolean;
   /** Vaga de quem está na fila sem o app; só quem organiza a fila mexe nela. */
   is_offline?: boolean;
   offline_label?: string | null;
@@ -98,8 +100,10 @@ export interface CourtScreen {
     is_active: boolean;
     slot_minutes: number;
     call_window_seconds: number;
-    /** O minuto de troca entre um turno e o próximo. */
+    /** A troca entre dois jogos: 1 min 30 s no handoff. */
     changeover_seconds: number;
+    /** Quando o placar vira "Acabando, liberem a quadra": 60 s. */
+    warn_seconds: number;
     /** "host": piloto sem nada na placa (Sprint 5). */
     queue_mode?: QueueMode;
     checkin_methods: Array<"qr" | "nfc" | "gps">;
@@ -111,9 +115,16 @@ export interface CourtScreen {
   park: { id: string; name: string; district: string | null };
   match: MatchState | null;
   is_live: boolean;
-  /** A quadra está no minuto de troca: sem partida, mas com grupo entrando. */
-  is_changeover?: boolean;
-  changeover?: Changeover | null;
+  /** A quadra está na troca de 1:30 entre dois jogos. */
+  is_handover?: boolean;
+  handover?: Handover | null;
+  /** Pausa de manutenção em curso. Sem duração: sai só por Retomar. */
+  pause?: TotemPause | null;
+  is_paused?: boolean;
+  /** Pausa marcada para quando este jogo acabar. */
+  armed_pause?: PauseKind | null;
+  /** Quem acabou de jogar e ainda não respondeu se volta para a fila. */
+  exit_ask?: { entry_id: string; name: string } | null;
   status_text: string;
   players_line: string;
   queue: QueueItem[];
@@ -138,17 +149,153 @@ export interface CourtScreen {
 
 export type QueueMode = "fixed_qr" | "host";
 
+/** As três pausas de manutenção do handoff. */
+export type PauseKind = "vassourao" | "rega" | "excecao";
+
+export interface TotemPause {
+  kind: PauseKind;
+  label: string;
+  desc?: string;
+  since: string;
+  seconds: number;
+}
+
+/** Os cinco estados da quadra no handoff. */
+export type TotemStateName = "playing" | "ending" | "changeover" | "paused" | "free";
+
+export interface TotemParty {
+  entry_id: string;
+  name: string;
+  size: number;
+  label: string;
+}
+
+export interface TotemQueueRow extends TotemParty {
+  position: number;
+  is_next: boolean;
+  source: string | null;
+  joined_at: string;
+  /** Nulo = depois da pausa: com pausa em curso ou agendada não dá conta. */
+  eta_seconds: number | null;
+  eta_at: string | null;
+}
+
 /**
- * O minuto entre dois turnos: quem jogou sai, o próximo entra. No fim
- * dele o turno do próximo começa sozinho — ninguém precisa fazer nada.
+ * A tela do totem inteira, resolvida no banco.
+ *
+ * Uma chamada traz estado, relógio, quem está em quadra, quem entra, a
+ * pausa, a pergunta de saída e a fila com previsão — para a tela não
+ * recalcular regra nenhuma por conta própria.
  */
-export interface Changeover {
+export interface TotemState {
+  court: {
+    id: string;
+    name: string;
+    number: number;
+    surface_label: string;
+    park: string | null;
+    /** A linha fina do topo: "Quadra 3 · Saibro · Ibirapuera". */
+    strip: string;
+    is_active: boolean;
+    status: string;
+  };
+  state: TotemStateName;
+  slot_seconds: number;
+  slot_minutes: number;
+  changeover_seconds: number;
+  warn_seconds: number;
+  remaining_seconds: number;
+  changeover_left: number;
+  elapsed_seconds: number;
+  playing: TotemParty | null;
+  next: TotemParty | null;
+  exit_ask: { entry_id: string; name: string; text: string } | null;
+  pause: TotemPause | null;
+  armed_pause: { kind: PauseKind; label: string } | null;
+  can_continue: boolean;
+  queue: TotemQueueRow[];
+  queue_count: number;
+  turn_seconds: number;
+  generated_at: string;
+}
+
+/** O que a entrada na fila devolve: a posição e a tela já atualizada. */
+export interface TotemJoinResult {
+  entry_id: string;
+  party_name: string;
+  party_size: number;
+  position: number | null;
+  playing: boolean;
+  screen: TotemState;
+}
+
+/** A tela de quem entrou pelo QR, no celular. */
+export interface PartyScreen extends TotemState {
+  my_party: {
+    entry_id: string;
+    name: string;
+    size: number;
+    label: string;
+    status: string;
+    position: number | null;
+    is_playing: boolean;
+    can_answer_exit: boolean;
+  };
+}
+
+/** A entrada na fila pelo QR: o party token só existe aqui, uma vez. */
+export interface PartyJoinResult {
+  entry_id: string;
+  party_name: string;
+  party_size: number;
+  position: number | null;
+  playing: boolean;
+  party_token: string;
+  court_id: string;
+}
+
+/** Um totem ligado a uma quadra. O token só existe na hora de criar. */
+export interface CourtDevice {
+  device_id: string;
+  court_id: string;
+  court_label: string;
+  park_name: string;
+  label: string | null;
+  created_at: string;
+  last_seen_at: string | null;
+  awake: boolean;
+  revoked_at: string | null;
+}
+
+export interface NewCourtDevice {
+  device_id: string;
+  court_id: string;
+  label: string | null;
+  /** Aparece uma única vez: depois o banco só tem o hash. */
+  token: string;
+  path: string;
+}
+
+/**
+ * A troca entre dois jogos.
+ *
+ * Só existe uma fase desde o totem: `changeover`, de 1 min 30 s, no fim
+ * da qual o turno de quem está entrando começa sozinho. As fases da
+ * chamada de 15 segundos saíram com ela, e `needs_accept` ficou para
+ * não quebrar quem lê o payload — é sempre falso.
+ */
+export interface Handover {
+  phase: "changeover";
   until: string;
   seconds_left: number;
-  next_entry_id: string | null;
-  next_label: string | null;
-  next_is_mine: boolean;
+  entry_id: string;
+  label: string | null;
+  /** Os nomes como a quadra chama: "Ana e Bruno". */
+  spoken_names: string;
+  group_size: number;
+  is_mine: boolean;
   text: string;
+  needs_accept: boolean;
 }
 
 export interface HostInfo {

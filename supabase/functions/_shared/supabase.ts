@@ -26,6 +26,22 @@ export function userClient(req: Request): SupabaseClient {
 }
 
 /**
+ * Cliente anônimo, sem usuário.
+ *
+ * Para as leituras que já são públicas de propósito (o placar, a fila
+ * da quadra). Usar service_role nelas não dava nenhum poder necessário
+ * e fazia qualquer bug futuro na rota operar ignorando RLS — a
+ * auditoria apontou três rotas assim.
+ */
+export function anonClient(): SupabaseClient {
+  return createClient(
+    requireEnv("SUPABASE_URL"),
+    requireEnv("SUPABASE_ANON_KEY"),
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  );
+}
+
+/**
  * Cliente com service_role — ignora RLS.
  * Use apenas onde o backend precisa de privilégio (emitir scan token,
  * despachar push), nunca para repassar dados brutos ao cliente.
@@ -56,6 +72,29 @@ export async function requireUser(req: Request): Promise<{
   }
 
   return { user: { id: data.user.id, email: data.user.email }, client };
+}
+
+/**
+ * O usuário, se houver.
+ *
+ * Desde o totem a entrada na fila não tem conta: o celular chama a
+ * função com a chave publicável no Authorization, e aí não existe
+ * usuário nenhum — o que autoriza a escrita é o scan token que esta
+ * função emite, que prova posse do QR impresso na quadra.
+ *
+ * Então aqui "sem usuário" é caminho normal, não erro.
+ */
+export async function optionalUser(req: Request): Promise<AuthenticatedUser | null> {
+  const authorization = req.headers.get("Authorization") ?? "";
+  if (!authorization.toLowerCase().startsWith("bearer ")) return null;
+
+  try {
+    const { user } = await requireUser(req);
+    return user;
+  } catch {
+    // Chave publicável no lugar de um JWT de pessoa: é o visitante.
+    return null;
+  }
 }
 
 /** Exige papel staff/admin (operação da quadra). */

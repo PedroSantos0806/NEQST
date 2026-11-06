@@ -3,6 +3,9 @@ import { allowedOrigins, corsHeadersFor, handlePreflight, json } from "./http.ts
 
 const WEB = "https://app.neqst.com.br";
 const STAGING = "https://staging.neqst.com.br";
+/** Como SUPABASE_URL fica num projeto hospedado (não é localhost). */
+const HOSPEDADO = "https://projeto.supabase.co";
+const LOCAL = "http://localhost:54321";
 
 function requestFrom(origin: string | null, method = "POST"): Request {
   return new Request("https://edge.test/x", {
@@ -11,21 +14,47 @@ function requestFrom(origin: string | null, method = "POST"): Request {
   });
 }
 
-function withEnv(value: string | null, run: () => void): void {
-  const previous = Deno.env.get("ALLOWED_ORIGINS");
-  if (value === null) Deno.env.delete("ALLOWED_ORIGINS");
-  else Deno.env.set("ALLOWED_ORIGINS", value);
+function withEnvVars(vars: Record<string, string | null>, run: () => void): void {
+  const previous = new Map<string, string | undefined>();
+
+  for (const [name, value] of Object.entries(vars)) {
+    previous.set(name, Deno.env.get(name));
+    if (value === null) Deno.env.delete(name);
+    else Deno.env.set(name, value);
+  }
+
   try {
     run();
   } finally {
-    if (previous === undefined) Deno.env.delete("ALLOWED_ORIGINS");
-    else Deno.env.set("ALLOWED_ORIGINS", previous);
+    for (const [name, value] of previous) {
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
+    }
   }
 }
 
-Deno.test("sem ALLOWED_ORIGINS cai em * (desenvolvimento)", () => {
+/**
+ * Caso comum: só a allow-list varia, e SUPABASE_URL fica como num
+ * projeto hospedado — que é onde o fail-closed precisa valer.
+ */
+function withEnv(value: string | null, run: () => void): void {
+  withEnvVars({ ALLOWED_ORIGINS: value, SUPABASE_URL: HOSPEDADO }, run);
+}
+
+Deno.test("sem ALLOWED_ORIGINS, projeto hospedado não libera origem nenhuma", () => {
+  // Este teste exigia "*" aqui, e era o "*" que a auditoria apontou:
+  // esquecer a variável nas Edge Functions (configuradas separadamente
+  // do .env) abria as 12 funções para qualquer site, em silêncio.
   withEnv(null, () => {
     assertEquals(allowedOrigins(), []);
+    assertEquals(corsHeadersFor(requestFrom(WEB))["Access-Control-Allow-Origin"], "null");
+  });
+});
+
+Deno.test("sem ALLOWED_ORIGINS, desenvolvimento local ainda cai em *", () => {
+  // O CLI local define SUPABASE_URL para localhost; quem roda na
+  // própria máquina não precisa configurar allow-list para testar.
+  withEnvVars({ ALLOWED_ORIGINS: null, SUPABASE_URL: LOCAL }, () => {
     assertEquals(corsHeadersFor(requestFrom(WEB))["Access-Control-Allow-Origin"], "*");
   });
 });

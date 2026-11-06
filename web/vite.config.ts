@@ -37,8 +37,21 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_MAP_TILE_ATTRIBUTION": JSON.stringify(
         pick("VITE_MAP_TILE_ATTRIBUTION", "MAP_TILE_ATTRIBUTION"),
       ),
+      // Estava no .env.example, era lida em lib/env.ts e consumida em
+      // ScanLanding — mas faltava aqui, então `playStoreUrl()` devolvia
+      // null sempre e o convite por QR nunca oferecia a Play Store.
+      // Funcionalidade morta sem nenhum erro.
+      "import.meta.env.VITE_PLAY_STORE_URL": JSON.stringify(
+        pick("VITE_PLAY_STORE_URL", "PLAY_STORE_URL"),
+      ),
     },
-    build: { outDir: "dist", sourcemap: true },
+    build: {
+      outDir: "dist",
+      // Sem sourcemap no bundle publicado: os .map iam para a Vercel
+      // com o TypeScript original inteiro, comentários e tudo, legível
+      // por qualquer pessoa. Em desenvolvimento continuam ligados.
+      sourcemap: mode !== "production",
+    },
     server: { port: 5173 },
   };
 });

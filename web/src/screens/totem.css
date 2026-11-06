@@ -1,0 +1,841 @@
+/* ---------------------------------------------------------------------
+   O totem da quadra.
+ *
+ * Vem do mock do handoff (Gabriel, 05/11/2026), com os tokens e a
+ * escala tipográfica dele. Duas diferenças, as duas de propósito:
+ *
+ *   . o mock desenhava um tablet de mentira dentro da página; aqui a
+ *     tela É o aparelho, então o container é a viewport inteira;
+ *   . os controles de demonstração não existem — eram andaime do
+ *     protótipo para não esperar 40 minutos.
+ *
+ * Todo o dimensionamento interno usa unidades de container (cqh), então
+ * a tela escala inteira para qualquer tamanho de tablet sem refazer
+ * medida nenhuma. Quem mexer aqui mexe em cqh, não em px.
+   --------------------------------------------------------------------- */
+
+.totem {
+  --paper: #ffffff;
+  --paper-2: #f2f1ea;
+  --t-ink: #101409;
+  --t-mute: #5c6350;
+  --t-line: #e3e1d6;
+  --ball: #d5e34b; /* verde da bola de tênis */
+  --ball-2: #c3d238;
+  --clay: #be4a1d; /* laranja do saibro */
+  --clay-soft: #faebe3;
+  --display: Archivo, "Helvetica Neue", Arial, sans-serif;
+
+  position: fixed;
+  inset: 0;
+  container-type: size;
+  background: var(--paper);
+  color: var(--t-ink);
+  font-family: var(--display);
+  overflow: hidden;
+  /* Quiosque: nada de seleção de texto nem de puxar para atualizar, que
+     é o jeito clássico de destravar um quiosque sem querer. */
+  user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+.totem *,
+.totem *::before,
+.totem *::after {
+  box-sizing: border-box;
+}
+
+.totem [hidden] {
+  display: none !important;
+}
+
+.totem-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 2.6cqh 3.2cqh 3cqh;
+  gap: 1.6cqh;
+}
+
+/* ---------- identificação discreta ---------- */
+.totem-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2cqh;
+  padding-bottom: 1.4cqh;
+  border-bottom: 1px solid var(--t-line);
+}
+
+.totem-strip .id,
+.totem-strip .clock {
+  font-size: 1.6cqh;
+  font-weight: 700;
+  color: var(--t-mute);
+}
+
+.totem-strip .id {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.totem-strip .clock {
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- placar ---------- */
+.totem-stage {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1cqh;
+}
+
+.totem-eyebrow {
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 1.9cqh;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--clay);
+}
+
+.totem-stage.is-gap .totem-eyebrow,
+.totem-stage.is-paused .totem-eyebrow {
+  color: var(--t-mute);
+}
+
+.totem-bigtime {
+  font-family: var(--display);
+  font-variation-settings: "wdth" 125, "wght" 900;
+  font-size: 14cqh;
+  line-height: 0.9;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+}
+
+.totem-stagerow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2cqh;
+}
+
+.totem-players {
+  font-size: 2.4cqh;
+  font-weight: 700;
+  line-height: 1.2;
+  min-width: 0;
+}
+
+.totem-players small {
+  display: block;
+  font-size: 1.7cqh;
+  font-weight: 500;
+  color: var(--t-mute);
+  margin-top: 0.4cqh;
+}
+
+.totem-elapsed {
+  font-size: 1.7cqh;
+  color: var(--t-mute);
+  text-align: right;
+  white-space: pre-line;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* pista da bolinha */
+.totem-lane {
+  position: relative;
+  height: 4.6cqh;
+  margin-top: 0.4cqh;
+}
+
+.totem-ball {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 3.6cqh;
+  height: 3.6cqh;
+  border-radius: 50%;
+  background: var(--ball);
+  overflow: hidden;
+  box-shadow: inset -0.5cqh -0.5cqh 0 rgba(16, 20, 9, 0.07);
+  animation:
+    totem-run 3.4s ease-in-out infinite alternate,
+    totem-hop 0.62s cubic-bezier(0.33, 0, 0.66, 1) infinite alternate;
+}
+
+.totem-ball::after {
+  content: "";
+  position: absolute;
+  inset: -32% 52% -32% -24%;
+  border: 0.3cqh solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+}
+
+@keyframes totem-run {
+  from {
+    left: 0;
+  }
+  to {
+    left: calc(100% - 3.6cqh);
+  }
+}
+
+@keyframes totem-hop {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-2.4cqh);
+  }
+}
+
+.totem-lane.off .totem-ball {
+  animation: none;
+  opacity: 0.25;
+}
+
+.totem-bar {
+  height: 0.7cqh;
+  background: var(--t-line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.totem-bar i {
+  display: block;
+  height: 100%;
+  background: var(--ball-2);
+  transition: width 1s linear;
+}
+
+.totem-stage.is-last .totem-bar i {
+  background: var(--clay);
+}
+
+.totem-stage.is-gap .totem-bar i {
+  background: var(--t-mute);
+}
+
+.totem-notice {
+  flex: 0 0 auto;
+  background: var(--clay-soft);
+  border-radius: 4px;
+  padding: 1.2cqh 1.6cqh;
+  font-size: 1.8cqh;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+.totem-notice b {
+  font-weight: 700;
+  color: var(--clay);
+}
+
+/* ---------- pergunta de saída ---------- */
+.totem-exitask {
+  flex: 0 0 auto;
+  background: var(--t-ink);
+  color: var(--paper);
+  border-radius: 6px;
+  padding: 1.6cqh 1.8cqh;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2cqh;
+}
+
+.totem-exitask .q {
+  font-size: 1.9cqh;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.totem-exitask .q b {
+  font-weight: 800;
+}
+
+.totem-exitask .opts {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 1cqh;
+}
+
+.totem-exitask button {
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 2.2cqh;
+  padding: 1.8cqh 0;
+  letter-spacing: -0.01em;
+}
+
+.totem-exitask .back {
+  background: var(--ball);
+  color: var(--t-ink);
+}
+
+.totem-exitask .out {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  color: var(--paper);
+}
+
+/* ---------- fila ---------- */
+.totem-queuehead {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2cqh;
+}
+
+.totem-queuehead h2 {
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 1.8cqh;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.totem-queuehead span {
+  font-size: 1.6cqh;
+  color: var(--t-mute);
+  font-weight: 500;
+}
+
+.totem-queue {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7cqh;
+  min-height: 0;
+  overflow-y: auto;
+  /* Sem isto, rolar a fila arrasta a página e o quiosque se destrava. */
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--t-line) transparent;
+}
+
+.totem-queue::-webkit-scrollbar {
+  width: 0.7cqh;
+}
+
+.totem-queue::-webkit-scrollbar-thumb {
+  background: var(--t-line);
+  border-radius: 3px;
+}
+
+.totem-queue > * {
+  flex: 0 0 auto;
+}
+
+.totem-queue.scrollable {
+  -webkit-mask-image: linear-gradient(to bottom, #000 86%, transparent);
+  mask-image: linear-gradient(to bottom, #000 86%, transparent);
+}
+
+.totem-row {
+  display: grid;
+  grid-template-columns: 3.4cqh 1fr auto;
+  align-items: center;
+  gap: 1.4cqh;
+  padding: 1.1cqh 1.4cqh;
+  border-radius: 4px;
+  background: var(--paper-2);
+  min-width: 0;
+}
+
+.totem-row.next {
+  background: var(--ball);
+}
+
+.totem-row .pos {
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 2.4cqh;
+  line-height: 1;
+  color: var(--t-mute);
+  text-align: center;
+}
+
+.totem-row.next .pos {
+  color: var(--t-ink);
+}
+
+.totem-row .who {
+  min-width: 0;
+}
+
+.totem-row .who b {
+  display: block;
+  font-size: 2.1cqh;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.totem-row .who span {
+  font-size: 1.5cqh;
+  color: var(--t-mute);
+  font-weight: 500;
+}
+
+.totem-row.next .who span,
+.totem-row.next .when span {
+  color: rgba(16, 20, 9, 0.72);
+}
+
+.totem-row .when {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.totem-row .when b {
+  display: block;
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 2.3cqh;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.totem-row .when span {
+  font-size: 1.4cqh;
+  color: var(--t-mute);
+  font-weight: 500;
+}
+
+.totem-empty {
+  font-size: 1.7cqh;
+  color: var(--t-mute);
+  padding: 1.8cqh 1.4cqh;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+/* ---------- área de toque ---------- */
+.totem-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4cqh;
+  padding-top: 1.6cqh;
+  border-top: 1px solid var(--t-line);
+}
+
+.totem-btn {
+  font-family: var(--display);
+  border: 0;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+  line-height: 1.15;
+}
+
+.totem-btn:focus-visible {
+  outline: 0.4cqh solid var(--t-ink);
+  outline-offset: 0.3cqh;
+}
+
+.totem-join {
+  background: var(--ball);
+  color: var(--t-ink);
+  padding: 3.2cqh 3cqh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5cqh;
+}
+
+.totem-join b {
+  font-variation-settings: "wght" 800;
+  font-size: 5.4cqh;
+  letter-spacing: -0.025em;
+  font-weight: 400;
+  line-height: 0.95;
+}
+
+.totem-join span {
+  font-size: 1.9cqh;
+  font-weight: 600;
+  color: rgba(16, 20, 9, 0.72);
+}
+
+.totem-continue {
+  background: transparent;
+  border: 2px solid var(--t-ink);
+  color: var(--t-ink);
+  padding: 2.2cqh 3cqh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3cqh;
+}
+
+.totem-continue b {
+  font-variation-settings: "wght" 800;
+  font-size: 3.8cqh;
+  letter-spacing: -0.02em;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.totem-continue span {
+  font-size: 1.7cqh;
+  font-weight: 600;
+  color: var(--t-mute);
+}
+
+.totem-pausegroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9cqh;
+}
+
+.totem-pausegroup .lbl {
+  font-variation-settings: "wght" 800;
+  font-size: 1.6cqh;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--t-mute);
+}
+
+.totem-pauses {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1cqh;
+}
+
+.totem-pause {
+  background: var(--clay-soft);
+  color: var(--clay);
+  padding: 2.1cqh 1.4cqh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4cqh;
+  text-align: left;
+}
+
+.totem-pause b {
+  font-variation-settings: "wght" 800;
+  font-size: 2.8cqh;
+  letter-spacing: -0.02em;
+  font-weight: 400;
+}
+
+.totem-pause span {
+  font-size: 1.4cqh;
+  color: rgba(16, 20, 9, 0.66);
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.totem-pause.armed {
+  background: var(--clay);
+  color: #fff;
+}
+
+.totem-pause.armed span {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.totem-resume {
+  background: var(--ball);
+  color: var(--t-ink);
+  padding: 3cqh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.totem-resume b {
+  font-variation-settings: "wght" 800;
+  font-size: 4cqh;
+  letter-spacing: -0.02em;
+  font-weight: 400;
+}
+
+/* ---------- entrar na fila ---------- */
+.totem-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  padding: 2.6cqh 3.2cqh 3cqh;
+  gap: 1.6cqh;
+}
+
+.totem-overlay h2 {
+  font-variation-settings: "wght" 800;
+  font-weight: 400;
+  font-size: 4.4cqh;
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+
+.totem-field {
+  background: var(--paper-2);
+  border-radius: 6px;
+  padding: 1.6cqh 2cqh;
+}
+
+.totem-field label {
+  display: block;
+  font-variation-settings: "wght" 800;
+  font-size: 1.5cqh;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--t-mute);
+  margin-bottom: 0.8cqh;
+}
+
+.totem-field .val {
+  font-variation-settings: "wght" 800;
+  font-size: 5cqh;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  min-height: 5.2cqh;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.totem-field .val.ph {
+  color: #a8ac9c;
+}
+
+.totem-caret {
+  display: inline-block;
+  width: 0.5cqh;
+  height: 4.2cqh;
+  background: var(--clay);
+  vertical-align: -0.5cqh;
+  animation: totem-blink 1.1s steps(1, end) infinite;
+}
+
+@keyframes totem-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.totem-stepper {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1fr;
+  gap: 1.2cqh;
+  align-items: center;
+}
+
+.totem-st {
+  background: var(--ball);
+  border: 0;
+  color: var(--t-ink);
+  border-radius: 6px;
+  padding: 1.8cqh 0;
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 4cqh;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.totem-st:disabled {
+  background: var(--t-line);
+  color: #a8ac9c;
+  cursor: default;
+}
+
+.totem-stval {
+  font-variation-settings: "wdth" 125, "wght" 900;
+  font-size: 6cqh;
+  line-height: 1;
+  text-align: center;
+  letter-spacing: -0.03em;
+}
+
+.totem-hint {
+  font-size: 1.6cqh;
+  color: var(--t-mute);
+  line-height: 1.35;
+  margin-top: 1cqh;
+  font-weight: 500;
+}
+
+/* Teclado próprio na tela: o do sistema costuma estar bloqueado em modo
+   quiosque, e seria uma rota de fuga da aplicação. */
+.totem-kb {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8cqh;
+  margin-top: auto;
+}
+
+.totem-kbrow {
+  display: flex;
+  gap: 0.8cqh;
+  justify-content: center;
+}
+
+.totem-key {
+  flex: 1 1 0;
+  background: var(--paper-2);
+  border: 0;
+  color: var(--t-ink);
+  border-radius: 5px;
+  padding: 1.8cqh 0;
+  font-family: var(--display);
+  font-size: 2.3cqh;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.totem-key:active {
+  background: var(--t-line);
+}
+
+.totem-key.wide {
+  flex: 2.4 1 0;
+}
+
+.totem-key.del {
+  flex: 1.6 1 0;
+  background: var(--clay-soft);
+  color: var(--clay);
+}
+
+.totem-ovfoot {
+  display: grid;
+  grid-template-columns: 1fr 1.8fr;
+  gap: 1.2cqh;
+}
+
+.totem-cancel,
+.totem-confirm {
+  border-radius: 6px;
+  padding: 2.2cqh 0;
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 2.8cqh;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+}
+
+.totem-cancel {
+  background: transparent;
+  border: 2px solid var(--t-line);
+  color: var(--t-mute);
+}
+
+.totem-confirm {
+  background: var(--ball);
+  border: 0;
+  color: var(--t-ink);
+}
+
+.totem-confirm:disabled {
+  background: var(--t-line);
+  color: #a8ac9c;
+  cursor: default;
+}
+
+/* ---------- confirmação de entrada ---------- */
+.totem-toast {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: var(--ball);
+  color: var(--t-ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2cqh;
+  padding: 4cqh;
+  text-align: center;
+}
+
+.totem-toast .k {
+  font-variation-settings: "wdth" 125, "wght" 900;
+  font-size: 13cqh;
+  line-height: 0.9;
+  letter-spacing: -0.04em;
+}
+
+.totem-toast .t {
+  font-variation-settings: "wght" 800;
+  font-size: 4cqh;
+  letter-spacing: -0.025em;
+}
+
+.totem-toast .s {
+  font-size: 2cqh;
+  font-weight: 600;
+  max-width: 34ch;
+  line-height: 1.35;
+  color: rgba(16, 20, 9, 0.78);
+}
+
+/* ---------- avisos de borda ---------- */
+.totem-fail {
+  position: absolute;
+  inset: auto 3.2cqh 3cqh;
+  z-index: 7;
+  background: var(--clay);
+  color: #fff;
+  border-radius: 6px;
+  padding: 1.6cqh 2cqh;
+  font-size: 1.9cqh;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.totem-sound {
+  position: absolute;
+  inset: auto auto 3cqh 3.2cqh;
+  z-index: 7;
+  background: var(--t-ink);
+  color: var(--paper);
+  border: 0;
+  border-radius: 999px;
+  padding: 1.4cqh 2.4cqh;
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 1.9cqh;
+  cursor: pointer;
+}
+
+.totem-boot {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.4cqh;
+  color: var(--t-mute);
+  font-weight: 600;
+  padding: 4cqh;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .totem *,
+  .totem *::before,
+  .totem *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useLiveCourt, useTicker } from "../hooks/useLiveCourt";
+import { useAuth } from "../hooks/useAuth";
+import { savedParty } from "../lib/party";
 import { SURFACE_COLOR, eta, hhmm, mmss, surfaceTextColor } from "../lib/format";
 import { rememberCourt, rememberPark } from "../lib/nav";
-import { ErrorState, Loading } from "../components/ui";
+import { buttonStyle, ErrorState, Loading } from "../components/ui";
 import { RacketStack } from "../components/Racket";
 import { BottomNav } from "../components/BottomNav";
 import { CallOverlay, StartedOverlay, SuccessOverlay } from "../components/Overlays";
@@ -12,7 +14,7 @@ import { ScanOverlay } from "./ScanOverlay";
 import { JoinSheet, type JoinOutcome } from "./JoinSheet";
 import { AskForQr, HostOpenSheet, HostPanel, InviteQr } from "./Host";
 import { cancelJoinRequest, checkIn, confirmAtCourt, decideJoinRequest, finishTurn, leaveQueue, nudgeCourt, setMatchTime } from "../lib/api";
-import { me } from "../lib/me";
+import { useMe } from "../hooks/useMe";
 import { stepMatchMinutes } from "../lib/limits";
 import { LocationError } from "../lib/geo";
 import type { CourtScreen, MyGroup, MyJoinRequest, Player, QueueItem, ScanResult } from "../lib/types";
@@ -29,18 +31,19 @@ type Flow =
 
 export function Court() {
   const { courtId } = useParams<{ courtId: string }>();
+  const { session } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { data, error, loading, refresh } = useLiveCourt(courtId);
   const [flow, setFlow] = useState<Flow>({ kind: "none" });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const isAdmin = useMe()?.profile?.role === "admin";
   const calledFor = useRef<string | null>(null);
   const nudgedFor = useRef<string | null>(null);
   const timers = useRef<number[]>([]);
 
-  useTicker(Boolean(data?.is_live || data?.my_entry?.is_called || data?.is_changeover));
+  useTicker(Boolean(data?.is_live || data?.my_entry?.is_called || data?.is_handover));
 
   // A barra inferior precisa saber onde o jogador está.
   useEffect(() => {
@@ -62,16 +65,6 @@ export function Court() {
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  // O controle de relógio é só de quem administra. `me()` tem cache de
-  // sessão, então isto não é uma ida ao servidor por quadra aberta.
-  useEffect(() => {
-    let alive = true;
-    void me()
-      .then((profile) => { if (alive) setIsAdmin(profile.profile?.role === "admin"); })
-      .catch(() => undefined);
-    return () => { alive = false; };
-  }, []);
-
   /**
    * A troca acabou e o turno do próximo precisa começar.
    *
@@ -79,11 +72,11 @@ export function Court() {
    * contagem zerar na tela e nada acontecer por até um minuto. Quem
    * está com a quadra aberta avisa o banco na hora — e o banco só
    * executa o que já estava vencido, então isso não pula a vez de
-   * ninguém. Uma vez por troca.
+   * ninguém. Uma vez por prazo.
    */
   useEffect(() => {
-    const change = data?.changeover;
-    if (!data?.is_changeover || !change || !courtId) return;
+    const change = data?.handover;
+    if (!data?.is_handover || !change || !courtId) return;
     if (nudgedFor.current === change.until) return;
 
     const wait = Math.max(0, new Date(change.until).getTime() - Date.now());
@@ -149,14 +142,22 @@ export function Court() {
     ? Math.max(0, Math.floor((new Date(match.expires_at).getTime() - now) / 1000))
     : 0;
 
-  // A troca de quadra: o minuto entre dois turnos. Contado a partir do
-  // horário que o servidor mandou, não do número que ele mandou — a
-  // tela fica aberta e o relógio precisa andar entre dois refetches.
-  const changeover = data.changeover ?? null;
-  const trading = Boolean(data.is_changeover && changeover);
-  const changeLeft = changeover
-    ? Math.max(0, Math.floor((new Date(changeover.until).getTime() - now) / 1000))
+  // A troca de turno, agora em uma forma só: 1 min 30 s para quem jogou
+  // sair e quem entra ocupar a quadra, e no fim dela o turno começa
+  // sozinho. Contada a partir do horário que o servidor mandou, não do
+  // número: a tela fica aberta e o relógio precisa andar entre dois
+  // refetches.
+  const handover = data.handover ?? null;
+  const trading = Boolean(data.is_handover && handover);
+  const paused = Boolean(data.is_paused);
+  const changeLeft = handover
+    ? Math.max(0, Math.floor((new Date(handover.until).getTime() - now) / 1000))
     : 0;
+
+  // Quem abre a quadra sem conta: lê tudo, e escreve pelo totem ou pelo
+  // QR impresso. Não é um estado de erro — desde o totem é o normal.
+  const visitor = !session;
+  const myParty = visitor ? savedParty() : null;
 
   const playingHere = group?.status === "playing";
   const needsMyCheckIn = Boolean(playingHere && !group?.checked_in);
@@ -174,6 +175,20 @@ export function Court() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Administração: tirar um grupo da fila.
+   *
+   * O caso real é o grupo que foi embora sem sair da fila — sem isso
+   * ele volta a ocupar a quadra a cada rodada e ninguém de fora entende
+   * por quê. Pergunta antes porque é a vez de outra pessoa que está
+   * sendo apagada.
+   */
+  function onRemoveFromQueue(item: QueueItem) {
+    const who = item.team_label ?? "este grupo";
+    if (!window.confirm(`Tirar ${who} da fila da ${court.name}?`)) return;
+    void act(() => leaveQueue(item.entry_id, "removido_pelo_admin"), `${who} saiu da fila.`);
   }
 
   function onLeave() {
@@ -311,7 +326,8 @@ export function Court() {
               : trading
                 ? (
                   <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "var(--ocre)", color: "var(--ink)", borderRadius: 6, fontSize: 11, fontWeight: 800, letterSpacing: ".1em" }}>
-                    <span className="dot" />TROCA DE GRUPO
+                    <span className="dot" />
+                    {paused ? "PAUSADA" : "TROCA DE GRUPO"}
                   </span>
                 )
                 : (
@@ -334,7 +350,9 @@ export function Court() {
                 ? `Tempo de quadra · turno de ${court.slot_minutes} min`
                 : trading
                   ? "Troca de grupo · o próximo entra sozinho"
-                  : "Aguardando check-in"}
+                  : paused
+                    ? "Quadra pausada · a fila está parada"
+                    : "Aguardando o primeiro grupo"}
             </span>
           </div>
 
@@ -343,8 +361,10 @@ export function Court() {
             empty={live
               ? match?.is_offline ? match.offline_label ?? "Grupo sem app" : "Grupo em quadra"
               : trading
-                ? `Entrando: ${changeover?.next_label ?? "o próximo da fila"}`
-                : "Sem jogo em andamento"}
+                ? `Entra: ${handover?.label ?? "o próximo da fila"}`
+                : paused
+                  ? "Ninguém entra agora"
+                  : "Sem jogo em andamento"}
           />
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
@@ -357,7 +377,7 @@ export function Court() {
                 ? `Faltam ~${Math.max(1, Math.ceil(remaining / 60))} min`
                 : trading
                   ? "O turno começa quando zerar"
-                  : "Pronta para jogar"}
+                    : "Pronta para jogar"}
             </span>
           </div>
         </div>
@@ -522,39 +542,54 @@ export function Court() {
         )}
 
         {/*
-          A troca de grupo, para quem entra agora. É o cartão que diz a
-          coisa mais importante da mudança: não há nada a fazer. O botão
-          existe só para quem já está na quadra e não quer esperar o
-          contador — a vez não se perde se ninguém tocar nele.
+          A troca de turno. Não há nada a apertar: desde o totem, o turno
+          de quem está entrando começa sozinho no fim dos 1:30. O cartão
+          existe para a pessoa saber que a quadra é dela agora, e é o
+          mesmo texto para quem entra e para quem assiste.
         */}
-        {trading && changeover?.next_is_mine && (
-          <div className="flash" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--ocre)", borderRadius: 12 }}>
+        {trading && (
+          <div
+            className="flash"
+            style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: handover?.is_mine ? "var(--green)" : "var(--chalk)", color: handover?.is_mine ? "var(--chalk)" : "var(--ink)", border: "2px solid var(--ocre)", borderRadius: 12 }}
+          >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "var(--ocre)" }}>
-                  VEZ DO SEU GRUPO · ENTREM NA QUADRA
+                  {handover?.is_mine ? "VEZ DO SEU GRUPO · ENTREM NA QUADRA" : "TROCA DE GRUPO"}
                 </span>
-                <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>Seu turno começa sozinho</span>
+                <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>
+                  {handover?.is_mine
+                    ? "Seu turno começa sozinho"
+                    : `Entra: ${handover?.label ?? "o próximo da fila"}`}
+                </span>
               </span>
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
                 <span className="bb" role="timer" style={{ fontSize: 34, lineHeight: 1 }}>{mmss(changeLeft)}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>PARA COMEÇAR</span>
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em" }}>PARA COMEÇAR</span>
               </span>
             </div>
             <span style={{ fontSize: 13, lineHeight: 1.4 }}>
-              O grupo anterior está saindo. Quando zerar, o tempo de quadra do seu grupo
-              começa — você não precisa fazer nada.
+              {handover?.is_mine
+                ? "O grupo anterior está saindo. Quando zerar, o tempo de quadra começa — você não precisa fazer nada."
+                : "Quando zerar, o tempo de quadra do próximo grupo começa a contar."}
             </span>
-            <button
-              type="button"
-              className="press"
-              disabled={busy}
-              onClick={() => void startCheckIn()}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 48, background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 10, fontSize: 14, fontWeight: 700 }}
-            >
-              {hostMode ? <Pin size={18} /> : <ScanFrame size={18} />}
-              Já estamos em quadra · começar agora
-            </button>
+          </div>
+        )}
+
+        {/*
+          Pausa de manutenção: a fila não anda e ninguém entra. Quem
+          libera é quem está na quadra, pelo totem — por isso aqui é só
+          aviso.
+        */}
+        {paused && data.pause && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--rust)", borderRadius: 10, fontSize: 13, lineHeight: 1.35 }}>
+            <span className="bb" role="timer" style={{ fontSize: 26, minWidth: 64, color: "var(--rust)" }}>
+              {mmss(data.pause.seconds)}
+            </span>
+            <span>
+              <strong>{data.pause.label}</strong> em andamento. A fila está parada e volta a
+              andar quando a quadra for liberada no totem.
+            </span>
           </div>
         )}
 
@@ -664,11 +699,36 @@ export function Court() {
           />
         )}
 
-        {hostMode && host && !group && (data.can_join || joinedElsewhere) && (
+        {/*
+          Sem conta, entrar na fila é no totem da quadra ou pelo QR
+          impresso nela — e é por isso que este cartão aponta para lá em
+          vez de oferecer um login que não existe mais.
+        */}
+        {visitor && data.court_accepting && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10 }}>
+            <span style={{ fontSize: 13, lineHeight: 1.45 }}>
+              <strong>Para entrar na fila</strong>, use o totem que fica na quadra, ou aponte a
+              câmera para o QR Code impresso nela. Não precisa de cadastro: é só o seu nome e
+              quantas pessoas vão jogar.
+            </span>
+            {myParty && (
+              <button
+                type="button"
+                className="press"
+                onClick={() => navigate("/fila")}
+                style={{ ...buttonStyle("primary"), minHeight: 48 }}
+              >
+                Ver a minha vaga na fila
+              </button>
+            )}
+          </div>
+        )}
+
+        {!visitor && hostMode && host && !group && (data.can_join || joinedElsewhere) && (
           <AskForQr hostName={host.host_name} />
         )}
 
-        {!group && (data.can_join || joinedElsewhere) && (
+        {!visitor && !group && (data.can_join || joinedElsewhere) && (
           <button
             type="button"
             className="press"
@@ -682,7 +742,7 @@ export function Court() {
           </button>
         )}
 
-        {!group && !data.can_join && !joinedElsewhere && !data.court_accepting && !data.can_open_host && (
+        {!visitor && !group && !data.can_join && !joinedElsewhere && !data.court_accepting && !data.can_open_host && (
           <div style={{ padding: 12, background: "var(--chalk)", border: "1.5px dashed rgba(47,70,41,.4)", borderRadius: 10, fontSize: 13, color: "var(--green)", textAlign: "center" }}>
             Esta quadra não está aceitando fila agora.
           </div>
@@ -722,7 +782,14 @@ export function Court() {
           )
           : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {data.queue.map((item) => <QueueRow key={item.entry_id} item={item} />)}
+              {data.queue.map((item) => (
+                <QueueRow
+                  key={item.entry_id}
+                  item={item}
+                  onRemove={isAdmin ? () => onRemoveFromQueue(item) : undefined}
+                  busy={busy}
+                />
+              ))}
             </div>
           )}
       </div>
@@ -936,7 +1003,16 @@ function PendingRequest({
   );
 }
 
-function QueueRow({ item }: { item: QueueItem }) {
+function QueueRow({
+  item,
+  onRemove,
+  busy,
+}: {
+  item: QueueItem;
+  /** Só para quem administra: tirar da fila quem foi embora sem avisar. */
+  onRemove?: () => void;
+  busy?: boolean;
+}) {
   const players = item.is_offline
     ? "Sem o app no celular"
     : item.players.map((player) => player.full_name ?? player.short_name).join(" · ");
@@ -993,6 +1069,27 @@ function QueueRow({ item }: { item: QueueItem }) {
         face={item.is_mine ? "#0A0E0B" : "#2F4629"}
         highlightLast={item.is_mine}
       />
+
+      {onRemove && (
+        <button
+          type="button"
+          className="press"
+          disabled={busy}
+          onClick={onRemove}
+          aria-label={`Remover ${item.team_label ?? "este grupo"} da fila`}
+          title="Remover da fila"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 40, minHeight: 40, flexShrink: 0,
+            background: "transparent",
+            color: item.is_mine ? "var(--chalk)" : "var(--rust)",
+            border: `1.5px solid ${item.is_mine ? "rgba(241,236,239,.6)" : "var(--rust)"}`,
+            borderRadius: 8, fontSize: 18, fontWeight: 800, lineHeight: 1,
+          }}
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }

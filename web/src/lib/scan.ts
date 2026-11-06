@@ -10,7 +10,26 @@
  * scanner nenhum, só a URL. O scanner aqui é para quem abre o app
  * primeiro.
  */
-import jsQR from "jsqr";
+/**
+ * jsQR entra por import dinâmico, e isso é medido, não estética.
+ *
+ * Ele só é usado no caminho de Safari/Firefox, dentro do laço da
+ * câmera. Estático, ia para o chunk que TODO MUNDO baixa no primeiro
+ * acesso — inclusive quem chegou pelo QR da placa e nunca abre o
+ * scanner, que é o caminho majoritário, e inclusive no Chrome, onde o
+ * BarcodeDetector nativo é usado e o jsQR nunca executa. Num app cujo
+ * cenário declarado é 3G de parque, isso é caro de graça.
+ */
+type JsQrFn = typeof import("jsqr").default;
+
+let jsQrPromise: Promise<JsQrFn> | null = null;
+
+function loadJsQr(): Promise<JsQrFn> {
+  // Uma carga por sessão, compartilhada: o laço da câmera roda a cada
+  // quadro e não pode disparar um import por quadro.
+  jsQrPromise ??= import("jsqr").then((module) => module.default);
+  return jsQrPromise;
+}
 
 type BarcodeDetectorLike = {
   detect(source: CanvasImageSource): Promise<Array<{ rawValue: string }>>;
@@ -103,6 +122,7 @@ export async function startQrScanner(
             return;
           }
         } else if (context) {
+          const jsQR = await loadJsQr();
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
           context.drawImage(video, 0, 0, canvas.width, canvas.height);

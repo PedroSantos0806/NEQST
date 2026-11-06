@@ -17,11 +17,18 @@ import type {
   MyQueueState,
   PaletteColor,
   ParkCard,
+  CourtDevice,
+  NewCourtDevice,
   ParkScreen,
   PilotStats,
   PinResult,
   ProfileSummary,
+  PartyJoinResult,
+  PartyScreen,
+  PauseKind,
   ScanResult,
+  TotemJoinResult,
+  TotemState,
 } from "./types";
 import { getPosition } from "./geo";
 
@@ -200,6 +207,72 @@ export const checkIn = (scanToken: string) =>
  */
 export const nudgeCourt = (courtId: string) =>
   rpc<CourtScreen>("nudge_court", { p_court_id: courtId });
+
+/**
+ * JOGAR: uma pessoa do grupo chamado aceita a vez.
+ *
+ * Basta uma. Sem chamada aberta e com a quadra livre, começa o turno na
+ * hora — é o mesmo gesto do check-in.
+ */
+// ---------------------------------------------------------------------
+// O totem da quadra
+//
+// Sem login: o token do aparelho é a credencial, e com ele dá para
+// exatamente duas coisas — ver a quadra e aceitar a vez de quem está
+// sendo chamado.
+// ---------------------------------------------------------------------
+
+export const totemScreen = (token: string) =>
+  rpc<TotemState>("totem_screen", { p_token: token });
+
+export const totemJoin = (token: string, name: string, size: number) =>
+  rpc<TotemJoinResult>("totem_join", { p_token: token, p_name: name, p_size: size });
+
+export const totemPause = (token: string, kind: PauseKind) =>
+  rpc<TotemState>("totem_pause", { p_token: token, p_kind: kind });
+
+export const totemResume = (token: string) =>
+  rpc<TotemState>("totem_resume", { p_token: token });
+
+export const totemContinue = (token: string) =>
+  rpc<TotemState>("totem_continue", { p_token: token });
+
+export const totemExitAnswer = (token: string, back: boolean) =>
+  rpc<TotemState>("totem_exit_answer", { p_token: token, p_back: back });
+
+// ---------------------------------------------------------------------
+// O QR e a tag NFC: entrar na fila pelo celular, sem conta
+// ---------------------------------------------------------------------
+
+export const scanJoinParty = (scanToken: string, name: string, size: number) =>
+  rpc<PartyJoinResult>("scan_join_party", {
+    p_scan_token: scanToken,
+    p_name: name,
+    p_size: size,
+  });
+
+export const partyScreen = (partyToken: string) =>
+  rpc<PartyScreen>("party_screen", { p_party_token: partyToken });
+
+export const partyLeave = (partyToken: string) =>
+  rpc<TotemState>("party_leave", { p_party_token: partyToken });
+
+export const partyExitAnswer = (partyToken: string, back: boolean) =>
+  rpc<TotemState>("party_exit_answer", { p_party_token: partyToken, p_back: back });
+
+export const createCourtDevice = (courtId: string, label?: string | null) =>
+  rpc<NewCourtDevice>("admin_create_court_device", {
+    p_court_id: courtId,
+    p_label: label ?? null,
+  });
+
+export const courtDevices = (courtId?: string | null) =>
+  rpc<CourtDevice[]>("admin_court_devices", { p_court_id: courtId ?? null });
+
+export const revokeCourtDevice = (deviceId: string) =>
+  rpc<{ device_id: string; revoked: boolean }>("admin_revoke_court_device", {
+    p_device_id: deviceId,
+  });
 
 /**
  * Administração: corrigir quanto falta no turno em andamento.

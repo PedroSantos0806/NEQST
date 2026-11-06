@@ -19,6 +19,19 @@ const Admin = lazy(() =>
   import("./screens/Admin").then((module) => ({ default: module.Admin })),
 );
 
+// A tela do totem não interessa a quem está com o celular na mão, e
+// carrega o motor de som e o CSS próprio dela: fica fora do bundle de
+// quem só quer entrar na fila.
+// A fila no celular: tela pequena, sem conta, e a primeira que muita
+// gente vai ver.
+const Fila = lazy(() =>
+  import("./screens/Fila").then((module) => ({ default: module.Fila })),
+);
+
+const Totem = lazy(() =>
+  import("./screens/Totem").then((module) => ({ default: module.Totem })),
+);
+
 /** Parâmetros que pertencem ao fluxo de login, não à rota. */
 const AUTH_PARAMS = ["code", "error", "error_code", "error_description", "state", "type"];
 
@@ -81,9 +94,51 @@ export function App() {
       <Route path="/q/:courtId" element={<ScanLanding />} />
       <Route path="/q/h/:code" element={<ScanLanding />} />
 
-      <Route path="/" element={<Protected><Parks /></Protected>} />
-      <Route path="/parque/:parkId" element={<Protected><Park /></Protected>} />
-      <Route path="/quadra/:courtId" element={<Protected><Court /></Protected>} />
+      {/*
+        O totem da quadra. Sem Protected de propósito: a credencial é o
+        token do link, não uma conta — um aparelho que fica num parque
+        público não pode carregar a sessão de ninguém.
+
+        /tablet continua valendo porque é o caminho dos links já
+        gerados, e o que identifica o aparelho é o token, não a rota.
+      */}
+      <Route
+        path="/totem/:token"
+        element={
+          <Suspense fallback={<Loading what="Carregando a quadra" />}>
+            <Totem />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/tablet/:token"
+        element={
+          <Suspense fallback={<Loading what="Carregando a quadra" />}>
+            <Totem />
+          </Suspense>
+        }
+      />
+
+      {/*
+        A fila de quem entrou pelo QR, no celular. Sem Protected: o que
+        liga a pessoa à vaga é o segredo guardado no navegador dela, não
+        uma conta.
+      */}
+      <Route path="/fila" element={<Fila />} />
+
+      {/*
+        Ler a fila não pede conta nenhuma.
+
+        É a fase 1 do app no handoff: acompanhar a quadra de qualquer
+        lugar. Quem ESCREVE na fila é o totem e o QR da quadra, então
+        estas três telas abrem para quem passar — e, sem sessão, elas
+        mesmas escondem as ações que exigiriam uma.
+      */}
+      <Route path="/" element={<Parks />} />
+      <Route path="/parque/:parkId" element={<Park />} />
+      <Route path="/quadra/:courtId" element={<Court />} />
+
+      {/* Perfil e administração continuam sendo de quem tem conta. */}
       <Route path="/perfil" element={<Protected><Profile /></Protected>} />
       <Route path="/admin" element={<Protected><AdminOnly /></Protected>} />
 

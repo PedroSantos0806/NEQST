@@ -15,8 +15,19 @@
  * Autenticação: header `x-cron-secret` = CRON_SECRET.
  */
 import { ApiError, json, requireEnv, requireMethod, serve } from "../_shared/http.ts";
-import { type ExpoPushMessage, isUnregisteredTicket, sendExpoPush } from "../_shared/expo.ts";
-import { sendWebPush, type VapidKeys, WebPushError } from "../_shared/webpush.ts";
+import {
+  ExpoPartialError,
+  type ExpoPushMessage,
+  type ExpoPushTicket,
+  isUnregisteredTicket,
+  sendExpoPush,
+} from "../_shared/expo.ts";
+import {
+  PushEndpointError,
+  sendWebPush,
+  type VapidKeys,
+  WebPushError,
+} from "../_shared/webpush.ts";
 import { serviceClient } from "../_shared/supabase.ts";
 import type { OutboxRow, PushTokenRow } from "../_shared/types.ts";
 
@@ -50,18 +61,26 @@ serve(async (req) => {
 
   const admin = serviceClient();
 
-  const { data: pending, error: pendingError } = await admin
-    .from("notification_outbox")
-    .select("id, user_id, entry_id, court_id, type, title, body, data, attempts")
-    .eq("status", "pending")
-    .lte("scheduled_for", new Date().toISOString())
-    .lt("attempts", MAX_ATTEMPTS)
-    .order("scheduled_for", { ascending: true })
-    .limit(MAX_BATCH)
-    .returns<OutboxRow[]>();
+  // O lote é RESERVADO, não só lido.
+  //
+  // Antes era um `select ... status = 'pending'` sem claim nem lease, e
+  // o docblock manda chamar de 10 em 10 segundos — enquanto um lote de
+  // 200 com fetch para a Expo e N push services leva mais que isso.
+  // Duas execuções sobrepostas pegavam as MESMAS linhas e mandavam o
+  // mesmo "É a sua vez!" duas vezes. `claim_notifications` usa
+  // `for update skip locked`, então cada worker leva um lote diferente.
+  const claim = { p_limit: MAX_BATCH, p_max_attempts: MAX_ATTEMPTS };
+  const { data: claimed, error: pendingError } = await admin.rpc("claim_notifications", claim);
 
   if (pendingError) throw new ApiError("DATABASE_ERROR", pendingError.message, 500);
-  if (!pending || pending.length === 0) {
+
+  // Sem `.returns<OutboxRow[]>()` aqui: numa RPC o postgrest-js enxerga
+  // o retorno como objeto único e recusa o molde de array em tempo de
+  // tipo ("Cannot cast single object to array type"). Como
+  // `claim_notifications` devolve `setof`, a garantia fica no valor.
+  const pending = (Array.isArray(claimed) ? claimed : []) as OutboxRow[];
+
+  if (pending.length === 0) {
     return json({ processed: 0, sent: 0, failed: 0 });
   }
 
@@ -137,23 +156,46 @@ serve(async (req) => {
   }
 
   if (messages.length > 0) {
-    try {
-      const tickets = await sendExpoPush(messages, Deno.env.get("EXPO_ACCESS_TOKEN") ?? undefined);
-
+    /**
+     * Cada ticket pertence à mensagem de MESMO índice. Só vale casar
+     * enquanto houver ticket: o que sobrar sem ticket fica como falha, e
+     * nunca herda o desfecho do vizinho — foi assim que o token de push
+     * de um usuário era desativado pelo erro de outro.
+     */
+    const applyTickets = (tickets: ExpoPushTicket[]) => {
       tickets.forEach((ticket, index) => {
         const outboxId = messageOutbox[index];
+        if (outboxId === undefined) return;
         if (ticket.status === "ok") {
           delivered.add(outboxId);
         } else {
           failures.set(outboxId, ticket.message ?? "expo_unknown_error");
-          if (isUnregisteredTicket(ticket)) deadTokens.push(messageToken[index]);
+          if (isUnregisteredTicket(ticket)) {
+            const token = messageToken[index];
+            if (token) deadTokens.push(token);
+          }
         }
       });
+
+      for (let index = tickets.length; index < messageOutbox.length; index += 1) {
+        failures.set(messageOutbox[index], "expo_sem_ticket");
+      }
+    };
+
+    try {
+      applyTickets(await sendExpoPush(messages, Deno.env.get("EXPO_ACCESS_TOKEN") ?? undefined));
     } catch (error) {
       // Expo fora do ar não derruba o canal web: registra e segue.
       console.error("expo_push_failed", error);
-      for (const outboxId of messageOutbox) {
-        failures.set(outboxId, `expo: ${String(error).slice(0, 200)}`);
+
+      if (error instanceof ExpoPartialError) {
+        // O que já foi entregue conta como entregue: reenviar isso
+        // seria avisar a mesma pessoa duas vezes.
+        applyTickets(error.tickets);
+      } else {
+        for (const outboxId of messageOutbox) {
+          failures.set(outboxId, `expo: ${String(error).slice(0, 200)}`);
+        }
       }
     }
   }
@@ -181,7 +223,12 @@ serve(async (req) => {
             })
             .catch((error: unknown) => {
               failures.set(row.id, `webpush: ${String(error).slice(0, 200)}`);
-              if (error instanceof WebPushError && error.isGone) {
+              // Endpoint fora da allow-list: linha gravada antes da
+              // regra existir. Desativa em vez de tentar para sempre.
+              if (
+                error instanceof WebPushError && error.isGone ||
+                error instanceof PushEndpointError
+              ) {
                 deadSubscriptions.push(sub.id);
               }
             }),
@@ -206,39 +253,77 @@ serve(async (req) => {
   // Entregue em um canal basta: tira da lista de falhas.
   for (const id of delivered) failures.delete(id);
 
+  // As escritas de desfecho são checadas uma por uma.
+  //
+  // Antes nenhuma olhava `.error`: se o `status = 'sent'` falhasse, os
+  // pushes JÁ tinham saído e as linhas continuavam `pending` com
+  // `attempts` intocado — reenvio sem fim, com a resposta HTTP ainda
+  // dizendo que deu tudo certo. Agora a falha aparece no log e na
+  // resposta, porque é ela que explica o push duplicado de amanhã.
+  const writeErrors: string[] = [];
+
+  // `PromiseLike`, não `Promise`: o builder do postgrest é awaitable mas
+  // não tem `catch`/`finally`, então exigir `Promise` aqui rejeitava
+  // todas as cinco chamadas na checagem de tipos.
+  async function write(what: string, run: PromiseLike<{ error: unknown }>): Promise<void> {
+    const { error } = await run;
+    if (error) {
+      console.error(`outbox_write_failed: ${what}`, error);
+      writeErrors.push(what);
+    }
+  }
+
   if (withoutChannel.length > 0) {
-    await admin
-      .from("notification_outbox")
-      .update({ status: "failed", last_error: "no_active_push_channel", attempts: MAX_ATTEMPTS })
-      .in("id", withoutChannel);
+    await write(
+      "sem_canal",
+      admin
+        .from("notification_outbox")
+        .update({ status: "failed", last_error: "no_active_push_channel", attempts: MAX_ATTEMPTS })
+        .in("id", withoutChannel),
+    );
   }
 
   if (delivered.size > 0) {
-    await admin
-      .from("notification_outbox")
-      .update({ status: "sent", sent_at: new Date().toISOString() })
-      .in("id", [...delivered]);
+    await write(
+      "marcar_enviado",
+      admin
+        .from("notification_outbox")
+        .update({ status: "sent", sent_at: new Date().toISOString() })
+        .in("id", [...delivered]),
+    );
   }
 
   for (const [id, message] of failures) {
-    await admin.rpc("increment_notification_attempts", { p_ids: [id], p_error: message });
+    await write(
+      "contar_tentativa",
+      admin.rpc("increment_notification_attempts", { p_ids: [id], p_error: message }),
+    );
   }
 
   if (deadTokens.length > 0) {
-    await admin.from("push_tokens").update({ is_active: false }).in("token", deadTokens);
+    await write(
+      "desativar_token",
+      admin.from("push_tokens").update({ is_active: false }).in("token", deadTokens),
+    );
   }
 
   if (deadSubscriptions.length > 0) {
-    await admin
-      .from("web_push_subscriptions")
-      .update({ is_active: false })
-      .in("id", deadSubscriptions);
+    await write(
+      "desativar_subscription",
+      admin
+        .from("web_push_subscriptions")
+        .update({ is_active: false })
+        .in("id", deadSubscriptions),
+    );
   }
 
   return json({
     processed: pending.length,
     sent: delivered.size,
     failed: failures.size + withoutChannel.length,
+    // Vazio é o normal. Com conteúdo, o lote foi entregue mas o estado
+    // no banco não acompanhou — é o que causa reenvio.
+    write_errors: writeErrors,
     channels: {
       expo_messages: messages.length,
       web_push_subscriptions: [...subsByUser.values()].reduce((sum, list) => sum + list.length, 0),

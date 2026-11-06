@@ -5,6 +5,13 @@ on:
     branches: ["**"]
   pull_request:
 
+# Os três jobs só leem o repositório. Sem esta linha, o workflow herda o
+# padrão do repositório — que pode incluir escrita em conteúdo, pacotes e
+# pull requests, tudo disponível para qualquer action de terceiro que
+# rode aqui.
+permissions:
+  contents: read
+
 jobs:
   edge-functions:
     name: Edge Functions (Deno)
@@ -28,6 +35,36 @@ jobs:
       # --allow-env: os testes de CORS mexem em ALLOWED_ORIGINS.
       - name: Testes unitários
         run: deno test --allow-env supabase/functions/_shared/
+
+  # ---------------------------------------------------------------------
+  # Vulnerabilidades conhecidas nas dependências.
+  #
+  # Job próprio porque é o único que pode falhar por motivo de fora: uma
+  # CVE publicada hoje quebra o build de um código que não mudou. Ver
+  # vermelho aqui e verde no resto diz exatamente isso.
+  #
+  # O portão é `high`: as duas moderadas que sobram são do
+  # react-router-dom (open redirect com contrabarra em <Link>), cuja
+  # correção exige major e vai em PR próprio. Era este job que faltava
+  # quando duas CVEs críticas de RCE ficaram meses nas devDependencies.
+  # ---------------------------------------------------------------------
+  audit:
+    name: Dependências (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Relatório completo (não falha)
+        run: npm audit --prefix web || true
+
+      - name: Falhar em high ou critical
+        run: npm audit --prefix web --audit-level=high
 
   web:
     name: App web (build)

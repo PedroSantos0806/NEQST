@@ -5,14 +5,25 @@ import {
   adminSetRole,
   adminUpsertPark,
   adminUsers,
+  courtDevices,
   courtQr,
+  createCourtDevice,
+  revokeCourtDevice,
 } from "../lib/api";
 import { ErrorState, Loading, buttonStyle } from "../components/ui";
 import { ChevronLeft, Close, Pin, Search, SurfaceIcon, Warn } from "../components/icons";
 import { SURFACE_COLOR, surfaceTextColor } from "../lib/format";
 import { AdminPilot } from "./AdminPilot";
 import { CourtForm, ParkForm, field } from "./admin-forms";
-import type { AdminCourt, AdminOverview, AdminPark, AdminUser, CourtQr } from "../lib/types";
+import type {
+  AdminCourt,
+  AdminOverview,
+  AdminPark,
+  AdminUser,
+  CourtDevice,
+  CourtQr,
+  NewCourtDevice,
+} from "../lib/types";
 
 type Tab = "quadras" | "pessoas" | "piloto";
 
@@ -299,6 +310,8 @@ function CourtRow({
   const [editing, setEditing] = useState(false);
   const [qr, setQr] = useState<CourtQr | null>(null);
   const [busy, setBusy] = useState(false);
+  const [devices, setDevices] = useState<CourtDevice[] | null>(null);
+  const [fresh, setFresh] = useState<NewCourtDevice | null>(null);
 
   async function showQr() {
     setBusy(true);
@@ -310,6 +323,38 @@ function CourtRow({
       setBusy(false);
     }
   }
+
+  async function withBusy(work: () => Promise<void>) {
+    setBusy(true);
+    try {
+      await work();
+    } catch (cause) {
+      onNotice((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const showTotems = () => withBusy(async () => {
+    setDevices(await courtDevices(court.id));
+    setFresh(null);
+  });
+
+  const addTotem = () => withBusy(async () => {
+    const created = await createCourtDevice(court.id, `Totem da ${court.name}`);
+    setFresh(created);
+    setDevices(await courtDevices(court.id));
+    onNotice("Link do totem criado. Copie agora: ele aparece uma única vez.");
+  });
+
+  const dropTotem = (device: CourtDevice) => {
+    if (!window.confirm(`Revogar o link de "${device.label ?? "totem"}"? O aparelho para de funcionar na hora.`)) return;
+    void withBusy(async () => {
+      await revokeCourtDevice(device.device_id);
+      setDevices(await courtDevices(court.id));
+      onNotice("Link revogado.");
+    });
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, background: "var(--bg)", border: "1px solid rgba(47,70,41,.15)", borderRadius: 10 }}>
@@ -367,10 +412,125 @@ function CourtRow({
             <button type="button" className="press" disabled={busy} onClick={() => void showQr()} style={{ ...buttonStyle("ghost"), minHeight: 38, fontSize: 12 }}>
               {busy ? "Gerando…" : "QR para imprimir"}
             </button>
+            <button type="button" className="press" disabled={busy} onClick={() => void showTotems()} style={{ ...buttonStyle("ghost"), minHeight: 38, fontSize: 12 }}>
+              Totem
+            </button>
           </div>
         )}
 
       {qr && <QrPanel qr={qr} onClose={() => setQr(null)} />}
+
+      {devices && (
+        <TotemPanel
+          courtName={court.name}
+          devices={devices}
+          fresh={fresh}
+          busy={busy}
+          onAdd={() => void addTotem()}
+          onRevoke={dropTotem}
+          onClose={() => { setDevices(null); setFresh(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * O totem da quadra.
+ *
+ * O link aparece UMA vez, na criação. Depois o banco só tem o hash —
+ * perdeu, gera outro e revoga o antigo. É a mesma regra do segredo do
+ * QR, pelo mesmo motivo: o que não é guardado não vaza.
+ *
+ * O aparelho não entra com conta nenhuma: se o totem do parque for
+ * levado, não vai sessão de admin com ele.
+ */
+function TotemPanel({
+  courtName,
+  devices,
+  fresh,
+  busy,
+  onAdd,
+  onRevoke,
+  onClose,
+}: {
+  courtName: string;
+  devices: CourtDevice[];
+  fresh: NewCourtDevice | null;
+  busy: boolean;
+  onAdd: () => void;
+  onRevoke: (device: CourtDevice) => void;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const link = fresh ? new URL(fresh.path, window.location.origin).toString() : null;
+
+  async function copy() {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="fade" style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>Totem da {courtName}</span>
+        <button type="button" className="press" onClick={onClose} aria-label="Fechar" style={{ display: "flex", width: 32, height: 32, alignItems: "center", justifyContent: "center", background: "transparent", border: "1.5px solid rgba(10,14,11,.25)", borderRadius: 8, color: "var(--ink)" }}>
+          <Close size={16} />
+        </button>
+      </div>
+
+      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: "var(--green)" }}>
+        O totem é por onde <strong>a pessoa entra na fila</strong>, com nome e
+        sobrenome, e por onde a quadra é pausada para manutenção. Ele fica aberto o
+        dia inteiro na quadra, em modo quiosque, sem conta de ninguém.
+      </p>
+
+      {fresh && link && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10, background: "rgba(196,144,81,.16)", border: "1.5px solid var(--ocre)", borderRadius: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink)" }}>
+            Abra este link no totem — ele aparece uma única vez
+          </span>
+          <code style={{ fontSize: 10, lineHeight: 1.4, wordBreak: "break-all", color: "var(--ink)" }}>{link}</code>
+          <button type="button" className="press" onClick={() => void copy()} style={{ ...buttonStyle("ghost"), minHeight: 38, fontSize: 12 }}>
+            {copied ? "Copiado!" : "Copiar o link"}
+          </button>
+        </div>
+      )}
+
+      {devices.length === 0
+        ? <span style={{ fontSize: 12, color: "var(--muted)" }}>Nenhum totem nesta quadra ainda.</span>
+        : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {devices.map((device) => (
+              <div key={device.device_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--bg)", border: "1px solid rgba(47,70,41,.18)", borderRadius: 8 }}>
+                <span style={{ flexGrow: 1, minWidth: 0, fontSize: 12, fontWeight: 700 }}>
+                  {device.label ?? "Totem"}
+                </span>
+                <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".06em", color: device.awake ? "var(--green)" : "var(--muted)" }}>
+                  {device.awake ? "ACESO" : "SEM SINAL"}
+                </span>
+                <button
+                  type="button"
+                  className="press"
+                  disabled={busy}
+                  onClick={() => onRevoke(device)}
+                  style={{ minHeight: 34, padding: "0 10px", background: "transparent", color: "var(--rust)", border: "1.5px solid var(--rust)", borderRadius: 7, fontSize: 11, fontWeight: 700 }}
+                >
+                  Revogar
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+      <button type="button" className="press" disabled={busy} onClick={onAdd} style={{ ...buttonStyle("primary", busy), minHeight: 42, fontSize: 13 }}>
+        {busy ? "Gerando…" : "Gerar link de um totem"}
+      </button>
     </div>
   );
 }

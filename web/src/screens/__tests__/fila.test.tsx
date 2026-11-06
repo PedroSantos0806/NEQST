@@ -1,0 +1,72 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * A fila no celular de quem entrou pelo QR.
+ *
+ * O que estes testes protegem é o que a pessoa vê antes de existir
+ * qualquer conta: a tela de digitar nome e sobrenome, e a de quem já
+ * está na fila. Se esta tela não se explicar sozinha, o QR da placa não
+ * serve para nada.
+ */
+
+const stored = vi.hoisted(() => ({ current: null as unknown }));
+
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => () => undefined,
+  useLocation: () => ({ pathname: "/fila", state: stored.current, search: "", hash: "", key: "t" }),
+}));
+
+vi.mock("../../lib/party", () => ({
+  savedParty: () => null,
+  rememberParty: () => undefined,
+  forgetParty: () => undefined,
+}));
+
+const { Fila } = await import("../Fila");
+
+const scan = {
+  scanToken: "tok-1",
+  expiresAt: new Date(Date.now() + 30_000).toISOString(),
+  distanceMeters: 8,
+  court: {
+    id: "court-1",
+    slug: "ibira-3",
+    name: "Quadra 03",
+    status: "available",
+    slot_minutes: 40,
+    queue_mode: "fixed_qr",
+    surface: "clay",
+    court_number: 3,
+  },
+};
+
+describe("a fila no celular", () => {
+  beforeEach(() => {
+    stored.current = null;
+  });
+
+  it("depois do QR, pede nome e sobrenome — e nenhum cadastro", () => {
+    stored.current = { scan };
+    const html = renderToStaticMarkup(<Fila />);
+
+    expect(html).toContain("Entrar na fila");
+    expect(html).toContain("Seu nome e sobrenome");
+    expect(html).toContain("Sem cadastro");
+    expect(html).toContain("QUADRA 03");
+    expect(html).toContain("Quantas pessoas vão jogar");
+    // Começa em 2, como no mock.
+    expect(html).toContain(">2<");
+    expect(html).toContain("Dá para passar de 4");
+    // Nada de senha, e-mail ou login em lugar nenhum desta tela.
+    expect(html).not.toContain("senha");
+    expect(html).not.toContain("E-mail");
+  });
+
+  it("sem QR e sem vaga guardada, diz o que fazer", () => {
+    const html = renderToStaticMarkup(<Fila />);
+    expect(html).toContain("Você não está em nenhuma fila");
+    expect(html).toContain("Escaneie o QR Code da quadra");
+    expect(html).toContain("totem");
+  });
+});

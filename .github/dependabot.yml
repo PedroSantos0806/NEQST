@@ -1,0 +1,52 @@
+# Vigilância de dependências.
+#
+# Nada vigiava: não havia Dependabot, nem `npm audit` na CI. Foi assim
+# que duas CVEs de execução remota de código ficaram nas devDependencies
+# sem nenhum alarme — e a correção delas era uma linha.
+#
+# Agrupado de propósito: PR separado por pacote em projeto com 10
+# dependências vira ruído, e ruído é o que faz a pessoa parar de olhar.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    groups:
+      # Ferramenta de build e teste: não vai para o navegador de
+      # ninguém, então pode subir junto e rápido.
+      ferramental:
+        patterns:
+          - "vite"
+          - "vitest"
+          - "@vitejs/*"
+          - "typescript"
+          - "jsdom"
+          - "@types/*"
+      # O que o usuário baixa: PR próprio, para ser lido com calma.
+      runtime:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "react-router-dom"
+          - "@supabase/supabase-js"
+          - "leaflet"
+          - "qrcode"
+          - "jsqr"
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Sao_Paulo
+    commit-message:
+      prefix: "chore(ci)"
