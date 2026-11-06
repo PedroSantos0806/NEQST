@@ -64,9 +64,10 @@ declare
   -- cada um é um segredo: o token do aparelho, o scan token do código
   -- impresso, o party token guardado no navegador de quem entrou.
   v_anon text[] := array[
-    'totem_screen', 'totem_join', 'totem_pause', 'totem_resume',
-    'totem_continue', 'totem_exit_answer',
-    'scan_join_party', 'party_screen', 'party_leave', 'party_exit_answer',
+    'totem_screen', 'totem_join', 'totem_join_group', 'totem_pause',
+    'totem_resume', 'totem_continue', 'totem_exit_answer',
+    'scan_queue', 'scan_join_party', 'scan_join_group',
+    'party_screen', 'party_leave', 'party_exit_answer',
     'court_screen', 'court_queue',
     'court_queue_items', 'match_state', 'match_side_players', 'park_screen',
     'parks_overview'
@@ -242,10 +243,11 @@ declare
   v_papel text;
   v_erro  text := '';
   v_internas text[] := array[
-    'join_party', 'pause_court', 'resume_court', 'continue_playing',
+    'join_party', 'join_group', 'pause_court', 'resume_court', 'continue_playing',
     'answer_exit_ask', 'start_handover', 'advance_court', 'tick_court',
-    'open_match', 'close_match', 'requeue_entry', 'totem_court',
-    'take_party_entry', 'take_anon_scan_token', 'totem_state',
+    'start_free_court', 'open_match', 'close_match', 'requeue_entry', 'totem_court',
+    'take_party_entry', 'take_party_member', 'take_anon_scan_token', 'totem_state',
+    'party_members', 'entry_label', 'entry_size',
     'expire_stale_queue_entries', 'advance_expired_queues'
   ];
 begin

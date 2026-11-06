@@ -163,11 +163,19 @@ export interface TotemPause {
 /** Os cinco estados da quadra no handoff. */
 export type TotemStateName = "playing" | "ending" | "changeover" | "paused" | "free";
 
+/** Uma pessoa dentro de uma party. O nome é o que a quadra chama. */
+export interface PartyMember {
+  id: string;
+  name: string;
+  source: string | null;
+}
+
 export interface TotemParty {
   entry_id: string;
   name: string;
   size: number;
   label: string;
+  members: PartyMember[];
 }
 
 export interface TotemQueueRow extends TotemParty {
@@ -175,6 +183,8 @@ export interface TotemQueueRow extends TotemParty {
   is_next: boolean;
   source: string | null;
   joined_at: string;
+  /** Ainda cabe gente neste grupo? O teto da party é 20. */
+  can_join: boolean;
   /** Nulo = depois da pausa: com pausa em curso ou agendada não dá conta. */
   eta_seconds: number | null;
   eta_at: string | null;
@@ -226,6 +236,8 @@ export interface TotemJoinResult {
   party_size: number;
   position: number | null;
   playing: boolean;
+  /** Entrou no grupo de alguém, em vez de criar uma party nova. */
+  joined_group: boolean;
   screen: TotemState;
 }
 
@@ -233,9 +245,14 @@ export interface TotemJoinResult {
 export interface PartyScreen extends TotemState {
   my_party: {
     entry_id: string;
+    /** O nome do GRUPO: "Marina Souza + Bruno Dias". */
     name: string;
+    /** O nome de quem está olhando, dentro do grupo. */
+    my_name: string;
     size: number;
     label: string;
+    members: PartyMember[];
+    in_group: boolean;
     status: string;
     position: number | null;
     is_playing: boolean;
@@ -250,6 +267,7 @@ export interface PartyJoinResult {
   party_size: number;
   position: number | null;
   playing: boolean;
+  joined_group: boolean;
   party_token: string;
   court_id: string;
 }

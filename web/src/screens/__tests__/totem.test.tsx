@@ -49,16 +49,23 @@ function base(): TotemState {
   };
 }
 
+/** Os membros de uma party, que é de onde o nome da linha sai. */
+function members(...names: string[]) {
+  return names.map((name, i) => ({ id: `m${i}`, name, source: "totem" }));
+}
+
+function party(entry_id: string, name: string, size: number, label: string) {
+  return { entry_id, name, size, label, members: members(...name.split(" + ")) };
+}
+
 function row(over: Partial<TotemState["queue"][number]> = {}): TotemState["queue"][number] {
   return {
-    entry_id: "e1",
+    ...party("e1", "Marina Souza", 2, "Simples"),
     position: 1,
-    name: "Marina Souza",
-    size: 2,
-    label: "Simples",
     is_next: true,
     source: "totem",
     joined_at: new Date().toISOString(),
+    can_join: true,
     eta_seconds: 684,
     eta_at: new Date(Date.now() + 684_000).toISOString(),
     ...over,
@@ -84,7 +91,7 @@ describe("o totem", () => {
     data.state = "playing";
     data.remaining_seconds = 684;
     data.elapsed_seconds = 1716;
-    data.playing = { entry_id: "p1", name: "Rafael Lima", size: 2, label: "Simples" };
+    data.playing = party("p1", "Rafael Lima", 2, "Simples");
 
     const html = render(data);
     expect(html).toContain("Em jogo, faltam");
@@ -100,8 +107,8 @@ describe("o totem", () => {
     data.state = "ending";
     data.remaining_seconds = 45;
     data.elapsed_seconds = 2355;
-    data.playing = { entry_id: "p1", name: "Rafael Lima", size: 2, label: "Simples" };
-    data.next = { entry_id: "e1", name: "Marina Souza", size: 2, label: "Simples" };
+    data.playing = party("p1", "Rafael Lima", 2, "Simples");
+    data.next = party("e1", "Marina Souza", 2, "Simples");
     data.queue = [row()];
     data.queue_count = 1;
 
@@ -116,7 +123,7 @@ describe("o totem", () => {
     const data = base();
     data.state = "ending";
     data.remaining_seconds = 30;
-    data.playing = { entry_id: "p1", name: "Duda Única", size: 1, label: "Sozinho" };
+    data.playing = party("p1", "Duda Única", 1, "Sozinho");
     data.can_continue = true;
 
     const html = render(data);
@@ -129,7 +136,7 @@ describe("o totem", () => {
     const data = base();
     data.state = "changeover";
     data.changeover_left = 82;
-    data.next = { entry_id: "e1", name: "Marina Souza", size: 2, label: "Simples" };
+    data.next = party("e1", "Marina Souza", 2, "Simples");
     data.queue = [row()];
     data.queue_count = 1;
     data.exit_ask = {
@@ -181,7 +188,7 @@ describe("o totem", () => {
     const data = base();
     data.state = "playing";
     data.remaining_seconds = 600;
-    data.playing = { entry_id: "p1", name: "Rafael Lima", size: 2, label: "Simples" };
+    data.playing = party("p1", "Rafael Lima", 2, "Simples");
     data.armed_pause = { kind: "vassourao", label: "Vassourão" };
 
     const html = render(data);
@@ -196,7 +203,7 @@ describe("o totem", () => {
     const data = base();
     data.state = "playing";
     data.remaining_seconds = 600;
-    data.playing = { entry_id: "p1", name: "Rafael Lima", size: 2, label: "Simples" };
+    data.playing = party("p1", "Rafael Lima", 2, "Simples");
     data.queue = [
       row({ entry_id: "e1", position: 1, name: "Zé do Ibira", size: 6, label: "Grupo de 6, revezando" }),
       row({ entry_id: "e2", position: 2, name: "Priscila Alves", size: 4, label: "Duplas", is_next: false }),
@@ -211,6 +218,39 @@ describe("o totem", () => {
     expect(html).toContain("Priscila Alves");
     expect(html).toContain("Dudu");
     expect(html).toContain("1 pessoa");
+  });
+
+  it("cada grupo da fila tem um + Entrar quando o totem aceita", () => {
+    const data = base();
+    data.state = "playing";
+    data.remaining_seconds = 600;
+    data.playing = party("p1", "Rafael Lima", 2, "Simples");
+    data.queue = [
+      row({ entry_id: "e1", position: 1, name: "Marina Souza" }),
+      row({ entry_id: "e2", position: 2, name: "Zé do Ibira", is_next: false }),
+    ];
+    data.queue_count = 2;
+
+    // Com `onJoinGroup`, cada linha que aceita gente ganha o botão: é o
+    // caminho de quem chegou depois e vai jogar com quem já esperava,
+    // sem ninguém aprovar nada.
+    const html = renderToStaticMarkup(<TotemBoard data={data} onJoinGroup={() => undefined} />);
+    expect(html.match(/\+ Entrar</g)).toHaveLength(2);
+
+    // Sem a função, o quadro é só leitura — é o que a tela de parede usa.
+    expect(render(data)).not.toContain("+ Entrar");
+  });
+
+  it("quem está em quadra não aceita mais ninguém", () => {
+    const data = base();
+    data.state = "playing";
+    data.remaining_seconds = 600;
+    data.playing = party("p1", "Rafael Lima", 2, "Simples");
+    data.queue = [row({ can_join: false })];
+    data.queue_count = 1;
+
+    const html = renderToStaticMarkup(<TotemBoard data={data} onJoinGroup={() => undefined} />);
+    expect(html).not.toContain("+ Entrar");
   });
 });
 

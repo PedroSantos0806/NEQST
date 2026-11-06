@@ -228,6 +228,14 @@ export const totemScreen = (token: string) =>
 export const totemJoin = (token: string, name: string, size: number) =>
   rpc<TotemJoinResult>("totem_join", { p_token: token, p_name: name, p_size: size });
 
+/** Entrar no grupo de quem já está na fila, sem aprovação de ninguém. */
+export const totemJoinGroup = (token: string, entryId: string, name: string) =>
+  rpc<TotemJoinResult>("totem_join_group", {
+    p_token: token,
+    p_entry_id: entryId,
+    p_name: name,
+  });
+
 export const totemPause = (token: string, kind: PauseKind) =>
   rpc<TotemState>("totem_pause", { p_token: token, p_kind: kind });
 
@@ -243,6 +251,17 @@ export const totemExitAnswer = (token: string, back: boolean) =>
 // ---------------------------------------------------------------------
 // O QR e a tag NFC: entrar na fila pelo celular, sem conta
 // ---------------------------------------------------------------------
+
+/** A fila da quadra pelo scan token, SEM gastar o token. */
+export const scanQueue = (scanToken: string) =>
+  rpc<TotemState>("scan_queue", { p_scan_token: scanToken });
+
+export const scanJoinGroup = (scanToken: string, entryId: string, name: string) =>
+  rpc<PartyJoinResult>("scan_join_group", {
+    p_scan_token: scanToken,
+    p_entry_id: entryId,
+    p_name: name,
+  });
 
 export const scanJoinParty = (scanToken: string, name: string, size: number) =>
   rpc<PartyJoinResult>("scan_join_party", {

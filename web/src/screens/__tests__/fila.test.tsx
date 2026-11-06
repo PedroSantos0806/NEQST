@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { TotemQueueRow } from "../../lib/types";
 
 /**
  * A fila no celular de quem entrou pelo QR.
@@ -23,7 +24,7 @@ vi.mock("../../lib/party", () => ({
   forgetParty: () => undefined,
 }));
 
-const { Fila } = await import("../Fila");
+const { Fila, Grupos } = await import("../Fila");
 
 const scan = {
   scanToken: "tok-1",
@@ -68,5 +69,74 @@ describe("a fila no celular", () => {
     expect(html).toContain("Você não está em nenhuma fila");
     expect(html).toContain("Escaneie o QR Code da quadra");
     expect(html).toContain("totem");
+  });
+});
+
+/** Uma linha da fila como o banco devolve, para o seletor de grupos. */
+function row(over: Partial<TotemQueueRow> = {}): TotemQueueRow {
+  return {
+    entry_id: "e1",
+    name: "Marina Souza",
+    size: 2,
+    label: "Simples",
+    members: [{ id: "m0", name: "Marina Souza", source: "totem" }],
+    position: 1,
+    is_next: true,
+    source: "totem",
+    joined_at: new Date().toISOString(),
+    can_join: true,
+    eta_seconds: 684,
+    eta_at: new Date(Date.now() + 684_000).toISOString(),
+    ...over,
+  };
+}
+
+describe("entrar em um grupo pelo celular", () => {
+  it("lista quem está esperando, com a posição e o rótulo", () => {
+    const html = renderToStaticMarkup(
+      <Grupos
+        queue={[
+          row(),
+          row({ entry_id: "e2", name: "Zé do Ibira", position: 2, size: 6, label: "Grupo de 6, revezando", is_next: false }),
+        ]}
+        ready
+        nameReady
+        onJoin={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Ou entre em um grupo que já está na fila");
+    expect(html).toContain("Não precisa de");
+    expect(html).toContain("aprovação de ninguém");
+    expect(html).toContain("Marina Souza");
+    expect(html).toContain("1º da fila · Simples");
+    expect(html).toContain("Zé do Ibira");
+    expect(html).toContain("2º da fila · Grupo de 6, revezando");
+    // Dois grupos, dois botões de entrar.
+    expect(html.match(/>Entrar</g)).toHaveLength(2);
+  });
+
+  it("sem nome escrito, os botões ficam travados e a tela diz por quê", () => {
+    const html = renderToStaticMarkup(
+      <Grupos queue={[row()]} ready={false} nameReady={false} onJoin={() => undefined} />,
+    );
+    expect(html).toContain("Escreva o seu nome acima");
+    expect(html).toContain("disabled");
+  });
+
+  it("quem já está jogando não é um grupo para entrar", () => {
+    // `can_join` é do banco: a party em quadra vem com ele falso, e
+    // então o bloco inteiro desaparece em vez de oferecer o impossível.
+    const html = renderToStaticMarkup(
+      <Grupos queue={[row({ can_join: false })]} ready nameReady onJoin={() => undefined} />,
+    );
+    expect(html).toBe("");
+  });
+
+  it("fila vazia não mostra seção nenhuma", () => {
+    const html = renderToStaticMarkup(
+      <Grupos queue={[]} ready nameReady onJoin={() => undefined} />,
+    );
+    expect(html).toBe("");
   });
 });
