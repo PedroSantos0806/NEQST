@@ -23,8 +23,12 @@ import type {
   PilotStats,
   PinResult,
   ProfileSummary,
+  PartyJoinResult,
+  PartyScreen,
+  PauseKind,
   ScanResult,
-  TabletScreen,
+  TotemJoinResult,
+  TotemState,
 } from "./types";
 import { getPosition } from "./geo";
 
@@ -210,22 +214,51 @@ export const nudgeCourt = (courtId: string) =>
  * Basta uma. Sem chamada aberta e com a quadra livre, começa o turno na
  * hora — é o mesmo gesto do check-in.
  */
-export const acceptTurn = (courtId: string) =>
-  rpc<CourtScreen>("accept_turn", { p_court_id: courtId });
-
 // ---------------------------------------------------------------------
-// O tablet da quadra
+// O totem da quadra
 //
 // Sem login: o token do aparelho é a credencial, e com ele dá para
 // exatamente duas coisas — ver a quadra e aceitar a vez de quem está
 // sendo chamado.
 // ---------------------------------------------------------------------
 
-export const tabletScreen = (token: string) =>
-  rpc<TabletScreen>("tablet_screen", { p_token: token });
+export const totemScreen = (token: string) =>
+  rpc<TotemState>("totem_screen", { p_token: token });
 
-export const tabletAcceptTurn = (token: string) =>
-  rpc<TabletScreen>("tablet_accept_turn", { p_token: token });
+export const totemJoin = (token: string, name: string, size: number) =>
+  rpc<TotemJoinResult>("totem_join", { p_token: token, p_name: name, p_size: size });
+
+export const totemPause = (token: string, kind: PauseKind) =>
+  rpc<TotemState>("totem_pause", { p_token: token, p_kind: kind });
+
+export const totemResume = (token: string) =>
+  rpc<TotemState>("totem_resume", { p_token: token });
+
+export const totemContinue = (token: string) =>
+  rpc<TotemState>("totem_continue", { p_token: token });
+
+export const totemExitAnswer = (token: string, back: boolean) =>
+  rpc<TotemState>("totem_exit_answer", { p_token: token, p_back: back });
+
+// ---------------------------------------------------------------------
+// O QR e a tag NFC: entrar na fila pelo celular, sem conta
+// ---------------------------------------------------------------------
+
+export const scanJoinParty = (scanToken: string, name: string, size: number) =>
+  rpc<PartyJoinResult>("scan_join_party", {
+    p_scan_token: scanToken,
+    p_name: name,
+    p_size: size,
+  });
+
+export const partyScreen = (partyToken: string) =>
+  rpc<PartyScreen>("party_screen", { p_party_token: partyToken });
+
+export const partyLeave = (partyToken: string) =>
+  rpc<TotemState>("party_leave", { p_party_token: partyToken });
+
+export const partyExitAnswer = (partyToken: string, back: boolean) =>
+  rpc<TotemState>("party_exit_answer", { p_party_token: partyToken, p_back: back });
 
 export const createCourtDevice = (courtId: string, label?: string | null) =>
   rpc<NewCourtDevice>("admin_create_court_device", {

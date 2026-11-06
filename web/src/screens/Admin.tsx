@@ -335,20 +335,20 @@ function CourtRow({
     }
   }
 
-  const showTablets = () => withBusy(async () => {
+  const showTotems = () => withBusy(async () => {
     setDevices(await courtDevices(court.id));
     setFresh(null);
   });
 
-  const addTablet = () => withBusy(async () => {
-    const created = await createCourtDevice(court.id, `Tablet da ${court.name}`);
+  const addTotem = () => withBusy(async () => {
+    const created = await createCourtDevice(court.id, `Totem da ${court.name}`);
     setFresh(created);
     setDevices(await courtDevices(court.id));
-    onNotice("Link do tablet criado. Copie agora: ele aparece uma única vez.");
+    onNotice("Link do totem criado. Copie agora: ele aparece uma única vez.");
   });
 
-  const dropTablet = (device: CourtDevice) => {
-    if (!window.confirm(`Revogar o link de "${device.label ?? "tablet"}"? O aparelho para de funcionar na hora.`)) return;
+  const dropTotem = (device: CourtDevice) => {
+    if (!window.confirm(`Revogar o link de "${device.label ?? "totem"}"? O aparelho para de funcionar na hora.`)) return;
     void withBusy(async () => {
       await revokeCourtDevice(device.device_id);
       setDevices(await courtDevices(court.id));
@@ -412,8 +412,8 @@ function CourtRow({
             <button type="button" className="press" disabled={busy} onClick={() => void showQr()} style={{ ...buttonStyle("ghost"), minHeight: 38, fontSize: 12 }}>
               {busy ? "Gerando…" : "QR para imprimir"}
             </button>
-            <button type="button" className="press" disabled={busy} onClick={() => void showTablets()} style={{ ...buttonStyle("ghost"), minHeight: 38, fontSize: 12 }}>
-              Tablet
+            <button type="button" className="press" disabled={busy} onClick={() => void showTotems()} style={{ ...buttonStyle("ghost"), minHeight: 38, fontSize: 12 }}>
+              Totem
             </button>
           </div>
         )}
@@ -421,13 +421,13 @@ function CourtRow({
       {qr && <QrPanel qr={qr} onClose={() => setQr(null)} />}
 
       {devices && (
-        <TabletPanel
+        <TotemPanel
           courtName={court.name}
           devices={devices}
           fresh={fresh}
           busy={busy}
-          onAdd={() => void addTablet()}
-          onRevoke={dropTablet}
+          onAdd={() => void addTotem()}
+          onRevoke={dropTotem}
           onClose={() => { setDevices(null); setFresh(null); }}
         />
       )}
@@ -436,16 +436,16 @@ function CourtRow({
 }
 
 /**
- * O tablet da quadra.
+ * O totem da quadra.
  *
  * O link aparece UMA vez, na criação. Depois o banco só tem o hash —
  * perdeu, gera outro e revoga o antigo. É a mesma regra do segredo do
  * QR, pelo mesmo motivo: o que não é guardado não vaza.
  *
- * O aparelho não entra com conta nenhuma: se o tablet do parque for
+ * O aparelho não entra com conta nenhuma: se o totem do parque for
  * levado, não vai sessão de admin com ele.
  */
-function TabletPanel({
+function TotemPanel({
   courtName,
   devices,
   fresh,
@@ -478,22 +478,22 @@ function TabletPanel({
   return (
     <div className="fade" style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700 }}>Tablet da {courtName}</span>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>Totem da {courtName}</span>
         <button type="button" className="press" onClick={onClose} aria-label="Fechar" style={{ display: "flex", width: 32, height: 32, alignItems: "center", justifyContent: "center", background: "transparent", border: "1.5px solid rgba(10,14,11,.25)", borderRadius: 8, color: "var(--ink)" }}>
           <Close size={16} />
         </button>
       </div>
 
       <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: "var(--green)" }}>
-        O tablet aceso na quadra é o que <strong>chama os próximos pelo nome</strong> e
-        mostra o botão JOGAR. Sem tablet, a quadra volta a trocar de turno sozinha,
-        depois de 1 minuto.
+        O totem é por onde <strong>a pessoa entra na fila</strong>, com nome e
+        sobrenome, e por onde a quadra é pausada para manutenção. Ele fica aberto o
+        dia inteiro na quadra, em modo quiosque, sem conta de ninguém.
       </p>
 
       {fresh && link && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10, background: "rgba(196,144,81,.16)", border: "1.5px solid var(--ocre)", borderRadius: 8 }}>
           <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink)" }}>
-            Abra este link no tablet — ele aparece uma única vez
+            Abra este link no totem — ele aparece uma única vez
           </span>
           <code style={{ fontSize: 10, lineHeight: 1.4, wordBreak: "break-all", color: "var(--ink)" }}>{link}</code>
           <button type="button" className="press" onClick={() => void copy()} style={{ ...buttonStyle("ghost"), minHeight: 38, fontSize: 12 }}>
@@ -503,13 +503,13 @@ function TabletPanel({
       )}
 
       {devices.length === 0
-        ? <span style={{ fontSize: 12, color: "var(--muted)" }}>Nenhum tablet nesta quadra ainda.</span>
+        ? <span style={{ fontSize: 12, color: "var(--muted)" }}>Nenhum totem nesta quadra ainda.</span>
         : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {devices.map((device) => (
               <div key={device.device_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--bg)", border: "1px solid rgba(47,70,41,.18)", borderRadius: 8 }}>
                 <span style={{ flexGrow: 1, minWidth: 0, fontSize: 12, fontWeight: 700 }}>
-                  {device.label ?? "Tablet"}
+                  {device.label ?? "Totem"}
                 </span>
                 <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".06em", color: device.awake ? "var(--green)" : "var(--muted)" }}>
                   {device.awake ? "ACESO" : "SEM SINAL"}
@@ -529,7 +529,7 @@ function TabletPanel({
         )}
 
       <button type="button" className="press" disabled={busy} onClick={onAdd} style={{ ...buttonStyle("primary", busy), minHeight: 42, fontSize: 13 }}>
-        {busy ? "Gerando…" : "Gerar link de um tablet"}
+        {busy ? "Gerando…" : "Gerar link de um totem"}
       </button>
     </div>
   );

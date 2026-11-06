@@ -3,15 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CourtScreen } from "../../lib/types";
 
 /**
- * A troca de turno na tela, nas três formas dela.
+ * A troca de turno na tela do celular, agora em uma forma só.
  *
- * O que estes testes protegem são as duas frases que decidem se a fila
- * anda na quadra de verdade:
- *
- *   . na chamada, que basta UMA pessoa apertar JOGAR;
- *   . na troca automática (quadra sem tablet), que não há nada a fazer.
- *
- * Trocar uma pela outra deixa todo mundo esperando que o outro aperte.
+ * Saíram a chamada de 15 s e o JOGAR: desde o totem, o turno de quem
+ * está entrando começa sozinho no fim dos 1:30. O que estes testes
+ * protegem é a frase que decide se a fila anda na quadra de verdade —
+ * que não há nada a apertar — e o aviso de pausa, que explica por que a
+ * fila parou.
  *
  * Renderizado com `renderToStaticMarkup` de propósito: o projeto não
  * tem biblioteca de testes de componente, e para ler o que a tela
@@ -53,10 +51,8 @@ function base(): CourtScreen {
       is_active: true,
       slot_minutes: 40,
       call_window_seconds: 120,
-      handover_call_seconds: 15,
-      handover_entry_seconds: 30,
-      changeover_seconds: 60,
-      has_tablet: true,
+      changeover_seconds: 90,
+      warn_seconds: 60,
       queue_mode: "fixed_qr",
       checkin_methods: ["qr"],
       latitude: -23.5,
@@ -69,6 +65,10 @@ function base(): CourtScreen {
     is_live: false,
     is_handover: false,
     handover: null,
+    pause: null,
+    is_paused: false,
+    armed_pause: null,
+    exit_ask: null,
     status_text: "Livre",
     players_line: "Sem jogo agora — check-in libera a quadra",
     queue: [],
@@ -76,7 +76,7 @@ function base(): CourtScreen {
     queue_text: "Fila vazia",
     remaining_seconds: 0,
     total_wait_seconds: 0,
-    turn_seconds: 40 * 60 + 60,
+    turn_seconds: 40 * 60 + 90,
     next_position_label: "1º",
     my_entry: null,
     my_group: null,
@@ -117,7 +117,7 @@ function render(state: CourtScreen): string {
   return renderToStaticMarkup(<Court />);
 }
 
-describe("a troca de quadra na tela", () => {
+describe("a troca de quadra na tela do celular", () => {
   beforeEach(() => {
     screen.current = null;
   });
@@ -129,91 +129,35 @@ describe("a troca de quadra na tela", () => {
     expect(html).not.toContain("Troca de grupo");
   });
 
-  it("na chamada, o placar mostra a contagem e quem está sendo chamado", () => {
+  it("na troca, o placar conta e diz quem entra", () => {
     const state = base();
     state.is_handover = true;
-    state.status_text = "Chamando o próximo";
+    state.status_text = "Troca de grupo";
     state.handover = {
-      phase: "calling",
-      until: new Date(Date.now() + 12_600).toISOString(),
-      seconds_left: 12,
+      phase: "changeover",
+      until: new Date(Date.now() + 82_600).toISOString(),
+      seconds_left: 82,
       entry_id: "entry-9",
       label: "Bia S.",
       spoken_names: "Bia S.",
       group_size: 1,
       is_mine: false,
-      calls_left: 2,
-      text: "Chamando o próximo grupo",
-      needs_accept: true,
-    };
-
-    const html = render(state);
-    expect(html).toContain("CHAMANDO");
-    expect(html).toContain("Chamando: Bia S.");
-    expect(html).toMatch(/00:1\d/);
-    expect(html).not.toContain("QUADRA LIVRE");
-    // Quem olha de fora entende o que acontece se ninguém aceitar.
-    expect(html).toContain("a vez passa para o seguinte");
-  });
-
-  it("chamado, o grupo vê JOGAR e que basta uma pessoa", () => {
-    const state = base();
-    state.is_handover = true;
-    state.handover = {
-      phase: "calling",
-      until: new Date(Date.now() + 9_600).toISOString(),
-      seconds_left: 9,
-      entry_id: "entry-1",
-      label: "Bia S.",
-      spoken_names: "Bia S.",
-      group_size: 2,
-      is_mine: true,
-      calls_left: 2,
-      text: "Chamando o próximo grupo",
-      needs_accept: true,
-    };
-    state.my_entry = item();
-    state.queue = [state.my_entry];
-    state.queue_length = 1;
-
-    const html = render(state);
-    expect(html).toContain("É a vez de vocês");
-    expect(html).toContain("JOGAR");
-    expect(html).toContain("uma pessoa");
-    expect(html).toContain("voltam para o fim da fila");
-    expect(html).not.toContain("Faça check-in para jogar");
-  });
-
-  it("aceita, a tela diz para entrar e que o tempo começa no fim", () => {
-    const state = base();
-    state.is_handover = true;
-    state.handover = {
-      phase: "entering",
-      until: new Date(Date.now() + 26_600).toISOString(),
-      seconds_left: 26,
-      entry_id: "entry-1",
-      label: "Bia S.",
-      spoken_names: "Bia S.",
-      group_size: 2,
-      is_mine: true,
-      calls_left: 2,
-      text: "Entrando na quadra",
+      text: "Troca de grupo — o próximo entra sozinho",
       needs_accept: false,
     };
-    state.my_entry = item({ is_called: false, status: "ready" });
-    state.queue = [state.my_entry];
-    state.queue_length = 1;
 
     const html = render(state);
-    expect(html).toContain("Seu tempo começa agora");
-    expect(html).toContain("PARA ENTRAR");
-    expect(html).toMatch(/00:2\d/);
+    expect(html).toContain("TROCA DE GRUPO");
+    expect(html).toContain("Entra: Bia S.");
+    expect(html).toMatch(/01:2\d/);
+    expect(html).not.toContain("QUADRA LIVRE");
+    // O que ninguém pode ver: um botão de aceitar que não existe mais.
     expect(html).not.toContain("JOGAR");
+    expect(html).not.toContain("CHAMANDO");
   });
 
-  it("quadra sem tablet: a troca automática não pede nada", () => {
+  it("é a vez do meu grupo: entra sozinho, sem nada a apertar", () => {
     const state = base();
-    state.court.has_tablet = false;
     state.is_handover = true;
     state.handover = {
       phase: "changeover",
@@ -222,9 +166,8 @@ describe("a troca de quadra na tela", () => {
       entry_id: "entry-1",
       label: "Bia S.",
       spoken_names: "Bia S.",
-      group_size: 1,
+      group_size: 2,
       is_mine: true,
-      calls_left: 0,
       text: "Troca de grupo — o próximo entra sozinho",
       needs_accept: false,
     };
@@ -235,11 +178,34 @@ describe("a troca de quadra na tela", () => {
     const html = render(state);
     expect(html).toContain("Seu turno começa sozinho");
     expect(html).toContain("você não precisa fazer nada");
-    expect(html).toContain("Já estamos em quadra");
-    expect(html).not.toContain("É a vez de vocês");
+    expect(html).toContain("PARA COMEÇAR");
+    expect(html).not.toContain("JOGAR");
+    expect(html).not.toContain("Faça check-in para jogar");
   });
 
-  it("sem chamada aberta, quem foi chamado continua vendo o check-in", () => {
+  it("pausada: a tela explica por que a fila parou, e quem libera", () => {
+    const state = base();
+    state.is_paused = true;
+    state.status_text = "Pausada";
+    state.pause = {
+      kind: "vassourao",
+      label: "Vassourão",
+      since: new Date(Date.now() - 140_000).toISOString(),
+      seconds: 140,
+    };
+    state.my_entry = item({ is_called: false, status: "waiting" });
+    state.queue = [state.my_entry];
+    state.queue_length = 1;
+
+    const html = render(state);
+    expect(html).toContain("Vassourão");
+    expect(html).toContain("A fila está parada");
+    expect(html).toContain("liberada no totem");
+    // 2 min 20 s de pausa, contados para cima.
+    expect(html).toContain("02:20");
+  });
+
+  it("sem troca aberta, quem foi chamado continua vendo o check-in", () => {
     const state = base();
     state.my_entry = item({ call_expires_at: new Date(Date.now() + 90_000).toISOString() });
     state.queue = [state.my_entry];

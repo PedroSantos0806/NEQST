@@ -11,7 +11,7 @@ import { ChevronLeft, Check, Clock, Pin, Players, QrIcon, ScanFrame, SurfaceIcon
 import { ScanOverlay } from "./ScanOverlay";
 import { JoinSheet, type JoinOutcome } from "./JoinSheet";
 import { AskForQr, HostOpenSheet, HostPanel, InviteQr } from "./Host";
-import { acceptTurn, cancelJoinRequest, checkIn, confirmAtCourt, decideJoinRequest, finishTurn, leaveQueue, nudgeCourt, setMatchTime } from "../lib/api";
+import { cancelJoinRequest, checkIn, confirmAtCourt, decideJoinRequest, finishTurn, leaveQueue, nudgeCourt, setMatchTime } from "../lib/api";
 import { useMe } from "../hooks/useMe";
 import { stepMatchMinutes } from "../lib/limits";
 import { LocationError } from "../lib/geo";
@@ -139,14 +139,14 @@ export function Court() {
     ? Math.max(0, Math.floor((new Date(match.expires_at).getTime() - now) / 1000))
     : 0;
 
-  // A troca de turno, nas três formas dela: a quadra chamando (15 s), o
-  // grupo entrando (30 s) e a troca automática das quadras sem tablet.
-  // Contada a partir do horário que o servidor mandou, não do número: a
-  // tela fica aberta e o relógio precisa andar entre dois refetches.
+  // A troca de turno, agora em uma forma só: 1 min 30 s para quem jogou
+  // sair e quem entra ocupar a quadra, e no fim dela o turno começa
+  // sozinho. Contada a partir do horário que o servidor mandou, não do
+  // número: a tela fica aberta e o relógio precisa andar entre dois
+  // refetches.
   const handover = data.handover ?? null;
   const trading = Boolean(data.is_handover && handover);
-  const calling = trading && handover?.phase === "calling";
-  const entering = trading && handover?.phase === "entering";
+  const paused = Boolean(data.is_paused);
   const changeLeft = handover
     ? Math.max(0, Math.floor((new Date(handover.until).getTime() - now) / 1000))
     : 0;
@@ -319,7 +319,7 @@ export function Court() {
                 ? (
                   <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "var(--ocre)", color: "var(--ink)", borderRadius: 6, fontSize: 11, fontWeight: 800, letterSpacing: ".1em" }}>
                     <span className="dot" />
-                    {calling ? "CHAMANDO" : entering ? "ENTRANDO" : "TROCA DE GRUPO"}
+                    {paused ? "PAUSADA" : "TROCA DE GRUPO"}
                   </span>
                 )
                 : (
@@ -340,13 +340,11 @@ export function Court() {
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", opacity: 0.92 }}>
               {live
                 ? `Tempo de quadra · turno de ${court.slot_minutes} min`
-                : calling
-                  ? "Chamando o próximo · alguém do grupo precisa aceitar"
-                  : entering
-                    ? "Entrando na quadra · o tempo começa quando zerar"
-                    : trading
-                      ? "Troca de grupo · o próximo entra sozinho"
-                      : "Aguardando o primeiro grupo"}
+                : trading
+                  ? "Troca de grupo · o próximo entra sozinho"
+                  : paused
+                    ? "Quadra pausada · a fila está parada"
+                    : "Aguardando o primeiro grupo"}
             </span>
           </div>
 
@@ -354,25 +352,23 @@ export function Court() {
             players={live ? match?.players ?? [] : []}
             empty={live
               ? match?.is_offline ? match.offline_label ?? "Grupo sem app" : "Grupo em quadra"
-              : calling
-                ? `Chamando: ${handover?.label ?? "o próximo da fila"}`
-                : trading
-                  ? `Entrando: ${handover?.label ?? "o próximo da fila"}`
+              : trading
+                ? `Entra: ${handover?.label ?? "o próximo da fila"}`
+                : paused
+                  ? "Ninguém entra agora"
                   : "Sem jogo em andamento"}
           />
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 9px", background: "rgba(10,14,11,.28)", borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
               <Players size={14} />
-              {live ? match?.group_label : calling ? "Chamando o próximo" : trading ? "Entrando em quadra" : "Sem grupo em quadra"}
+              {live ? match?.group_label : trading ? "Entrando em quadra" : "Sem grupo em quadra"}
             </span>
             <span style={{ fontSize: 12, fontWeight: 600 }}>
               {live
                 ? `Faltam ~${Math.max(1, Math.ceil(remaining / 60))} min`
-                : calling
-                  ? `A vez passa em ${mmss(changeLeft)}`
-                  : trading
-                    ? "O turno começa quando zerar"
+                : trading
+                  ? "O turno começa quando zerar"
                     : "Pronta para jogar"}
             </span>
           </div>
@@ -538,106 +534,53 @@ export function Court() {
         )}
 
         {/*
-          A chamada do turno, para quem está sendo chamado agora.
-
-          É o cartão mais importante da tela: o tablet está gritando o
-          nome do grupo e alguém tem 15 segundos para responder. UMA
-          pessoa basta — e é isso que o texto precisa dizer, senão cada
-          um fica esperando que o outro aperte.
+          A troca de turno. Não há nada a apertar: desde o totem, o turno
+          de quem está entrando começa sozinho no fim dos 1:30. O cartão
+          existe para a pessoa saber que a quadra é dela agora, e é o
+          mesmo texto para quem entra e para quem assiste.
         */}
-        {calling && handover?.is_mine && (
-          <div className="flash" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, background: "var(--ocre)", color: "var(--ink)", border: "2px solid var(--ink)", borderRadius: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em" }}>
-                  CHAMANDO O SEU GRUPO
-                </span>
-                <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>É a vez de vocês</span>
-              </span>
-              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                <span className="bb" role="timer" style={{ fontSize: 40, lineHeight: 1 }}>{mmss(changeLeft)}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em" }}>PARA ACEITAR</span>
-              </span>
-            </div>
-            <span style={{ fontSize: 13, lineHeight: 1.4 }}>
-              Basta <strong>uma pessoa</strong> do grupo apertar — vale para todos.
-              Se ninguém apertar, a vez passa para o próximo e vocês voltam para o fim da fila.
-            </span>
-            <button
-              type="button"
-              className="press"
-              disabled={busy}
-              onClick={() => void act(() => acceptTurn(court.id), "Vez aceita! Entrem na quadra.")}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 64, background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--ink)", borderRadius: 10, fontSize: 22, fontWeight: 900, letterSpacing: ".04em" }}
-            >
-              JOGAR
-            </button>
-          </div>
-        )}
-
-        {/* Aceitaram: agora é só entrar. O relógio de jogo começa no fim. */}
-        {entering && handover?.is_mine && (
-          <div className="flash" style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--ocre)", borderRadius: 12 }}>
+        {trading && (
+          <div
+            className="flash"
+            style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: handover?.is_mine ? "var(--green)" : "var(--chalk)", color: handover?.is_mine ? "var(--chalk)" : "var(--ink)", border: "2px solid var(--ocre)", borderRadius: 12 }}
+          >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "var(--ocre)" }}>
-                  VEZ ACEITA · ENTREM NA QUADRA
+                  {handover?.is_mine ? "VEZ DO SEU GRUPO · ENTREM NA QUADRA" : "TROCA DE GRUPO"}
                 </span>
-                <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>Seu tempo começa agora</span>
+                <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>
+                  {handover?.is_mine
+                    ? "Seu turno começa sozinho"
+                    : `Entra: ${handover?.label ?? "o próximo da fila"}`}
+                </span>
               </span>
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
                 <span className="bb" role="timer" style={{ fontSize: 34, lineHeight: 1 }}>{mmss(changeLeft)}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>PARA ENTRAR</span>
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em" }}>PARA COMEÇAR</span>
               </span>
             </div>
             <span style={{ fontSize: 13, lineHeight: 1.4 }}>
-              Quando zerar, o tempo de quadra do seu grupo começa a contar — esteja na quadra.
+              {handover?.is_mine
+                ? "O grupo anterior está saindo. Quando zerar, o tempo de quadra começa — você não precisa fazer nada."
+                : "Quando zerar, o tempo de quadra do próximo grupo começa a contar."}
             </span>
           </div>
         )}
 
         {/*
-          Quadra sem tablet: a troca automática da Sprint 6. Aqui não há
-          nada a fazer, e é isso que o cartão diz.
+          Pausa de manutenção: a fila não anda e ninguém entra. Quem
+          libera é quem está na quadra, pelo totem — por isso aqui é só
+          aviso.
         */}
-        {trading && !calling && !entering && handover?.is_mine && (
-          <div className="flash" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, background: "var(--green)", color: "var(--chalk)", border: "2px solid var(--ocre)", borderRadius: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "var(--ocre)" }}>
-                  VEZ DO SEU GRUPO · ENTREM NA QUADRA
-                </span>
-                <span className="bb" style={{ fontSize: 30, lineHeight: 1 }}>Seu turno começa sozinho</span>
-              </span>
-              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                <span className="bb" role="timer" style={{ fontSize: 34, lineHeight: 1 }}>{mmss(changeLeft)}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "var(--mauve)" }}>PARA COMEÇAR</span>
-              </span>
-            </div>
-            <span style={{ fontSize: 13, lineHeight: 1.4 }}>
-              O grupo anterior está saindo. Quando zerar, o tempo de quadra do seu grupo
-              começa — você não precisa fazer nada.
+        {paused && data.pause && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--rust)", borderRadius: 10, fontSize: 13, lineHeight: 1.35 }}>
+            <span className="bb" role="timer" style={{ fontSize: 26, minWidth: 64, color: "var(--rust)" }}>
+              {mmss(data.pause.seconds)}
             </span>
-            <button
-              type="button"
-              className="press"
-              disabled={busy}
-              onClick={() => void act(() => acceptTurn(court.id), "Turno começado.")}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", minHeight: 48, background: "transparent", color: "var(--chalk)", border: "1.5px solid rgba(241,236,239,.6)", borderRadius: 10, fontSize: 14, fontWeight: 700 }}
-            >
-              Já estamos em quadra · começar agora
-            </button>
-          </div>
-        )}
-
-        {/* A chamada é de outro grupo: quem olha só acompanha. */}
-        {(calling || entering) && !handover?.is_mine && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10, fontSize: 13, lineHeight: 1.35 }}>
-            <span className="bb" role="timer" style={{ fontSize: 26, minWidth: 64, color: "var(--green)" }}>{mmss(changeLeft)}</span>
             <span>
-              {calling
-                ? <>A quadra está chamando <strong>{handover?.label ?? "o próximo grupo"}</strong>. Se ninguém do grupo aceitar, a vez passa para o seguinte.</>
-                : <>{handover?.label ?? "O próximo grupo"} aceitou e está entrando na quadra.</>}
+              <strong>{data.pause.label}</strong> em andamento. A fila está parada e volta a
+              andar quando a quadra for liberada no totem.
             </span>
           </div>
         )}

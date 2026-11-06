@@ -1,19 +1,20 @@
 /**
  * O som da quadra.
  *
- * O tablet fica numa quadra pública, a cinco metros de quem está
+ * O totem fica numa quadra pública, a cinco metros de quem está
  * jogando: é por ele que a quadra avisa que o tempo está acabando e
- * chama os próximos pelo nome. Quem está em quadra não vai olhar tela.
+ * pergunta a quem acabou se volta para a fila. Quem está em quadra não
+ * vai olhar tela.
  *
  * Dois recursos do próprio navegador, nenhum arquivo de áudio:
  *
  *   . WebAudio para os apitos. Um bip gerado na hora não depende de
  *     arquivo baixado, não tem licença e toca mesmo offline.
- *   . speechSynthesis para os nomes. É a única forma de falar "Ana e
- *     Bruno" — áudio gravado nunca saberia o nome de quem chegou hoje.
+ *   . speechSynthesis para os nomes. É a única forma de falar "Rafael
+ *     Lima" — áudio gravado nunca saberia o nome de quem chegou hoje.
  *
  * O navegador não deixa tocar som antes de alguém tocar na tela, então
- * a tela do tablet pede um toque uma vez ("Ativar som") e depois disso
+ * a tela do totem pede um toque uma vez ("Ativar som") e depois disso
  * o resto acontece sozinho.
  */
 
@@ -114,49 +115,55 @@ export function say(text: string): void {
 }
 
 /**
- * O que a quadra fala ao chamar um grupo.
+ * O que a quadra fala quando o tempo de alguém acaba.
  *
  * Separado do resto para poder ser testado: é a frase que vai ecoar no
- * parque, e errar a concordância dela é o tipo de coisa que se descobre
- * tarde.
+ * parque, e é a mesma da faixa na tela — quem está de costas ouve, quem
+ * está de frente lê, e os dois recebem a mesma pergunta.
  */
-export function callText(names: string | null | undefined, groupSize = 0): string {
-  const who = (names ?? "").trim();
-  if (!who) return "Próximo grupo da fila, é a vez de vocês. Aperte jogar no tablet.";
-  const plural = groupSize > 1 || /\be\b/.test(who);
-  return plural
-    ? `${who}, é a vez de vocês. Aperte jogar no tablet.`
-    : `${who}, é a sua vez. Aperte jogar no tablet.`;
+export function exitAskText(name: string | null | undefined): string {
+  const who = (name ?? "").trim();
+  return who
+    ? `${who}, acabou seu tempo. Quer sair ou voltar pro fim da fila?`
+    : "Acabou o tempo. Liberem a quadra, por favor.";
+}
+
+/** O que a quadra fala quando a troca acaba e o próximo entra. */
+export function turnStartText(name: string | null | undefined): string {
+  const who = (name ?? "").trim();
+  return who
+    ? `Começou o tempo da quadra. Bom jogo, ${who}!`
+    : "Começou o tempo de quadra. Bom jogo!";
 }
 
 export const SOUNDS = {
   /** Falta 1 minuto para o turno acabar. */
-  oneMinute(): void {
+  oneMinute(hasQueue: boolean): void {
     play([{ hz: 880, ms: 140 }, { hz: 880, ms: 140 }]);
-    say("Falta um minuto.");
+    say(hasQueue ? "Falta um minuto. Liberem a quadra." : "Falta um minuto.");
   },
 
-  /** Acabou o tempo do turno. */
-  turnOver(): void {
+  /** Acabou o tempo: a pergunta de saída, em voz alta. */
+  turnOver(name: string | null | undefined): void {
     play([{ hz: 660, ms: 220 }, { hz: 520, ms: 220 }, { hz: 400, ms: 420 }]);
-    say("Tempo esgotado.");
-  },
-
-  /** Chamando um grupo pelo nome. */
-  calling(names: string | null | undefined, groupSize = 0): void {
-    play([{ hz: 1040, ms: 120 }, { hz: 1320, ms: 160 }]);
-    say(callText(names, groupSize));
-  },
-
-  /** O grupo aceitou e tem alguns segundos para entrar. */
-  accepted(seconds: number): void {
-    play([{ hz: 760, ms: 120 }, { hz: 1010, ms: 180 }]);
-    say(`Boa. Vocês têm ${seconds} segundos para entrar na quadra.`);
+    say(exitAskText(name));
   },
 
   /** Começou o tempo de quadra. */
-  turnStart(): void {
+  turnStart(name: string | null | undefined): void {
     play([{ hz: 520, ms: 150 }, { hz: 660, ms: 150 }, { hz: 880, ms: 320 }]);
-    say("Começou o tempo de quadra. Bom jogo!");
+    say(turnStartText(name));
+  },
+
+  /** A quadra parou para manutenção. */
+  paused(label: string): void {
+    play([{ hz: 440, ms: 180 }, { hz: 330, ms: 300 }]);
+    say(`Quadra pausada: ${label}. A fila está parada.`);
+  },
+
+  /** E voltou. */
+  resumed(): void {
+    play([{ hz: 660, ms: 140 }, { hz: 880, ms: 220 }]);
+    say("Quadra liberada. A fila voltou a andar.");
   },
 };

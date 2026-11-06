@@ -19,10 +19,11 @@ const Admin = lazy(() =>
   import("./screens/Admin").then((module) => ({ default: module.Admin })),
 );
 
-// A tela do tablet não interessa a quem está com o celular na mão, e
-// carrega o motor de som: fica fora do bundle de quem só quer jogar.
-const Tablet = lazy(() =>
-  import("./screens/Tablet").then((module) => ({ default: module.Tablet })),
+// A tela do totem não interessa a quem está com o celular na mão, e
+// carrega o motor de som e o CSS próprio dela: fica fora do bundle de
+// quem só quer entrar na fila.
+const Totem = lazy(() =>
+  import("./screens/Totem").then((module) => ({ default: module.Totem })),
 );
 
 /** Parâmetros que pertencem ao fluxo de login, não à rota. */
@@ -88,15 +89,26 @@ export function App() {
       <Route path="/q/h/:code" element={<ScanLanding />} />
 
       {/*
-        O tablet da quadra. Sem Protected de propósito: a credencial é o
+        O totem da quadra. Sem Protected de propósito: a credencial é o
         token do link, não uma conta — um aparelho que fica num parque
         público não pode carregar a sessão de ninguém.
+
+        /tablet continua valendo porque é o caminho dos links já
+        gerados, e o que identifica o aparelho é o token, não a rota.
       */}
+      <Route
+        path="/totem/:token"
+        element={
+          <Suspense fallback={<Loading what="Carregando a quadra" />}>
+            <Totem />
+          </Suspense>
+        }
+      />
       <Route
         path="/tablet/:token"
         element={
           <Suspense fallback={<Loading what="Carregando a quadra" />}>
-            <Tablet />
+            <Totem />
           </Suspense>
         }
       />
