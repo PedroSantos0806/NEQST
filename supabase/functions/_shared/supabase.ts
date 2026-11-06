@@ -74,6 +74,29 @@ export async function requireUser(req: Request): Promise<{
   return { user: { id: data.user.id, email: data.user.email }, client };
 }
 
+/**
+ * O usuário, se houver.
+ *
+ * Desde o totem a entrada na fila não tem conta: o celular chama a
+ * função com a chave publicável no Authorization, e aí não existe
+ * usuário nenhum — o que autoriza a escrita é o scan token que esta
+ * função emite, que prova posse do QR impresso na quadra.
+ *
+ * Então aqui "sem usuário" é caminho normal, não erro.
+ */
+export async function optionalUser(req: Request): Promise<AuthenticatedUser | null> {
+  const authorization = req.headers.get("Authorization") ?? "";
+  if (!authorization.toLowerCase().startsWith("bearer ")) return null;
+
+  try {
+    const { user } = await requireUser(req);
+    return user;
+  } catch {
+    // Chave publicável no lugar de um JWT de pessoa: é o visitante.
+    return null;
+  }
+}
+
 /** Exige papel staff/admin (operação da quadra). */
 export async function requireStaff(userId: string): Promise<"staff" | "admin"> {
   const { data, error } = await serviceClient()

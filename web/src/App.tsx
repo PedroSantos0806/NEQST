@@ -22,6 +22,12 @@ const Admin = lazy(() =>
 // A tela do totem não interessa a quem está com o celular na mão, e
 // carrega o motor de som e o CSS próprio dela: fica fora do bundle de
 // quem só quer entrar na fila.
+// A fila no celular: tela pequena, sem conta, e a primeira que muita
+// gente vai ver.
+const Fila = lazy(() =>
+  import("./screens/Fila").then((module) => ({ default: module.Fila })),
+);
+
 const Totem = lazy(() =>
   import("./screens/Totem").then((module) => ({ default: module.Totem })),
 );
@@ -112,6 +118,13 @@ export function App() {
           </Suspense>
         }
       />
+
+      {/*
+        A fila de quem entrou pelo QR, no celular. Sem Protected: o que
+        liga a pessoa à vaga é o segredo guardado no navegador dela, não
+        uma conta.
+      */}
+      <Route path="/fila" element={<Fila />} />
 
       <Route path="/" element={<Protected><Parks /></Protected>} />
       <Route path="/parque/:parkId" element={<Protected><Park /></Protected>} />
