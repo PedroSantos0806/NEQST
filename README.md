@@ -26,7 +26,13 @@ Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
 - [Sprint 7](docs/sprint7.md) — a chamada no tablet, com som: um
   aparelho parado na quadra chama os próximos pelo nome por 15 s, uma
   pessoa aperta JOGAR, o grupo tem 30 s para entrar e o turno começa.
-  Sem tablet aceso, a quadra volta à troca automática da Sprint 6.
+  **Substituída pela Sprint 8**, que é o que vale hoje.
+- [Sprint 8](docs/sprint8.md) — **o totem da quadra, e a fila sem
+  conta**: a pessoa digita nome e sobrenome no aparelho da quadra ou
+  pelo QR impresso nela, 40 min de jogo, troca de 1:30 no fim da qual o
+  próximo entra sozinho, a pergunta "quer sair ou voltar pro fim da
+  fila?" para quem acabou, e as pausas de manutenção, que não têm
+  duração. Conta ficou só para administrar quadra.
 
 O que difere entre web e app (push, QR Code, CORS, login) está em
 [docs/plataformas.md](docs/plataformas.md). A resposta à auditoria de
@@ -217,6 +223,13 @@ da fila com o mesmo PIN, e a espera estimada contando a troca
 própria (sem conta de ninguém), chamada de 15 s descendo a fila, JOGAR
 de uma pessoa só, 30 s para entrar, som e fala pelo navegador, e o admin
 tirando da fila quem foi embora ([`docs/sprint7.md`](docs/sprint7.md)).
+
+**Sprint 8:** o totem e a fila sem conta — `queue_entries` passou a
+aceitar party (nome digitado + quantidade) sem `created_by`, a chamada
+de 15 s deu lugar à troca de 1:30 com pergunta de saída, entraram as
+três pausas de manutenção sem duração, e a escrita na fila passou a ser
+autorizada por segredo (token do totem, scan token do QR, party token do
+navegador) em vez de por conta ([`docs/sprint8.md`](docs/sprint8.md)).
 
 Sugestões que ficaram registradas para depois, em
 [`docs/sprint2.md`](docs/sprint2.md#o-que-não-entrou): rate limiting no

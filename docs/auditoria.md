@@ -178,10 +178,40 @@ quadra.
 |---|---|
 | `react-router-dom@7` | major de produção; PR próprio. O atenuante está acima |
 | Pinar as 4 actions por SHA | não consigo buscar os SHAs reais deste ambiente, e **inventar SHA quebra a CI**. Fica para quem tiver rede: `gh api repos/actions/checkout/commits/v4 --jq .sha` |
-| Rate limiting nas 12 funções | é desenho novo (janela deslizante por `user_id`), não ajuste. Merece PR com teste de carga |
+| Rate limiting nas 12 funções | é desenho novo, não ajuste. Merece PR com teste de carga. **Subiu de prioridade na Sprint 8** — ver a nota abaixo |
 | `useAsyncData`, `Sheet` com focus trap, quebrar `Court.tsx` | refatoração de frontend, nenhuma com furo de segurança. Valem muito, e valem PR próprio |
 | Policies explícitas nas 5 tabelas deny-all | hoje seguras por ausência de grant; o risco é um grant futuro. Vale `force row level security`, junto do próximo trabalho de RLS |
 | Retenção de `host_invites`, `pilot_events`, `queue_pin_attempts`, `host_sessions` | crescimento, não segurança |
 | Fonte única do mapa de erros NQ* | o mapa está em três lugares; gerar do SQL é um gerador novo |
 | `architecture.md`, `database.md`, `api.md` em drift | pararam na Sprint 4/5 e as Sprints 6 e 7 entraram depois. Atualizar é trabalho de documentação, não de correção |
 | Contraste do `--ocre` (WCAG AA) | achado real (3,67:1); mexer na paleta é decisão de design |
+
+---
+
+## Nota da Sprint 8: a fila sem conta mudou o peso do rate limiting
+
+Esta auditoria foi feita quando toda escrita na fila exigia conta. Desde
+o [totem](sprint8.md) não exige mais: entrar na fila é digitar nome e
+sobrenome, no aparelho da quadra ou pelo QR impresso nela.
+
+O que **não** mudou: cada escrita continua exigindo um segredo — token
+do aparelho, scan token de uso único com localização conferida, ou o
+party token do navegador de quem entrou. E as funções internas seguem
+fechadas para `anon` e `authenticated`, com o teste 90 cobrando isso
+função por função, nominalmente.
+
+O que mudou é o **custo de um abuso**:
+
+- a superfície chamável sem conta passou de 2 RPCs de leitura para 10;
+- `user_id` deixou de existir no caminho do jogador, então a janela
+  deslizante que a correção pendente desenharia **não pode ser por
+  usuário**. Tem de ser por token de aparelho, por scan token e por IP;
+- um scan token é de uso único, mas nada impede um script de pedir
+  vários em sequência da mesma coordenada — o freio hoje é só a
+  distância conferida.
+
+Nenhum desses é furo novo de autorização: ninguém escreve sem segredo. É
+disponibilidade — encher a fila de uma quadra. Com o piloto numa quadra
+só, o risco é baixo e visível (o admin remove da fila pelo painel). Com
+várias quadras abertas ao público, **rate limiting deixa de ser higiene
+e passa a ser requisito**, e o desenho dele mudou de chave.

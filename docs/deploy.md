@@ -232,13 +232,17 @@ não anda sozinha, que é a regra toda da
 `nudge_court()` quando a contagem zera, para não esperar o tique; o cron
 é a rede de segurança para quando ninguém está olhando.
 
-Sprint 7: a chamada do tablet dura 15 segundos, então o cron de minuto
-em minuto **não é mais o relógio principal** — quem faz a chamada descer
-a fila na hora é o próprio tablet, que fala com o servidor a cada 5 s
-(`tablet_screen`, que por dentro chama `nudge_court`). O cron continua
-sendo a rede de segurança: sem ele, uma quadra que ficou sem tablet e sem
-ninguém com a tela aberta não encerraria o turno vencido
-([Sprint 7](sprint7.md)).
+Sprint 8: o cron de minuto em minuto **não é o relógio principal** —
+quem faz a quadra andar na hora é o próprio totem, que fala com o
+servidor a cada 5 s (`totem_screen`, que por dentro executa o que já
+venceu). O cron continua sendo a rede de segurança: sem ele, uma quadra
+que ficou sem totem aceso e sem ninguém com a tela aberta não encerraria
+o turno vencido nem começaria o turno de quem está entrando
+([Sprint 8](sprint8.md)).
+
+Uma exceção que vale saber: **quadra pausada não anda**, nem pelo cron.
+A pausa de manutenção não tem duração e só sai por toque humano em
+Retomar — é isso que segura a fila enquanto passam o vassourão.
 
 Conferir: `select * from cron.job;` e `select * from cron.job_run_details order by start_time desc limit 20;`
 
