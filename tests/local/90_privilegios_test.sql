@@ -48,22 +48,26 @@ declare
   v_erro text := '';
   -- Chamadas do app com a chave de usuário logado.
   v_authenticated text[] := array[
-    'accept_turn', 'admin_court_devices', 'admin_create_court_device',
+    'admin_court_devices', 'admin_create_court_device',
     'admin_overview', 'admin_pilot_stats', 'admin_revoke_court_device',
     'admin_set_match_time', 'admin_set_role', 'admin_upsert_court',
     'admin_upsert_park', 'admin_users', 'cancel_join_request', 'court_screen',
     'decide_join_request', 'host_add_offline', 'host_invite_opened',
     'host_mark_offline', 'issue_host_invite', 'join_with_pin', 'match_state',
     'my_profile_summary', 'my_queue_state', 'nudge_court', 'open_host_queue',
-    'park_screen', 'parks_overview', 'request_join', 'tablet_accept_turn',
-    'tablet_screen', 'update_my_profile',
+    'park_screen', 'parks_overview', 'request_join', 'update_my_profile',
     -- chamadas pelas Edge Functions com a chave do usuário
     'check_in_and_start', 'join_queue', 'leave_queue', 'finish_my_turn',
     'call_next', 'court_queue', 'court_photos_page'
   ];
-  -- O tablet e a placa da quadra não têm conta.
+  -- O totem, o QR e a placa da quadra não têm conta. O que autoriza
+  -- cada um é um segredo: o token do aparelho, o scan token do código
+  -- impresso, o party token guardado no navegador de quem entrou.
   v_anon text[] := array[
-    'tablet_screen', 'tablet_accept_turn', 'court_screen', 'court_queue',
+    'totem_screen', 'totem_join', 'totem_pause', 'totem_resume',
+    'totem_continue', 'totem_exit_answer',
+    'scan_join_party', 'party_screen', 'party_leave', 'party_exit_answer',
+    'court_screen', 'court_queue',
     'court_queue_items', 'match_state', 'match_side_players', 'park_screen',
     'parks_overview'
   ];
@@ -221,6 +225,60 @@ begin
   assert v_anonimo -> 0 ->> 'full_name' is null,
     format('queue_entry_players também: %s', v_anonimo);
   assert v_anonimo -> 0 ->> 'short_name' is not null, 'com o nome curto';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 6. Sem conta não quer dizer sem porteiro
+--
+-- A fila passou a aceitar escrita de quem não está logado, e é por isso
+-- que estas funções NÃO podem estar abertas: quem escreve na fila tem de
+-- passar por um dos três segredos (token do totem, scan token do QR,
+-- party token do navegador). Se `join_party` ficasse chamável pelo anon,
+-- qualquer um com a chave publicável encheria a fila de qualquer quadra.
+-- ---------------------------------------------------------------------
+do $$
+declare
+  v_fn    text;
+  v_papel text;
+  v_erro  text := '';
+  v_internas text[] := array[
+    'join_party', 'pause_court', 'resume_court', 'continue_playing',
+    'answer_exit_ask', 'start_handover', 'advance_court', 'tick_court',
+    'open_match', 'close_match', 'requeue_entry', 'totem_court',
+    'take_party_entry', 'take_anon_scan_token', 'totem_state',
+    'expire_stale_queue_entries', 'advance_expired_queues'
+  ];
+begin
+  foreach v_fn in array v_internas loop
+    foreach v_papel in array array['anon', 'authenticated'] loop
+      if exists (
+        select 1 from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = v_fn
+          and has_function_privilege(v_papel, p.oid, 'EXECUTE')
+      ) then
+        v_erro := v_erro || format('%s (%s), ', v_fn, v_papel);
+      end if;
+    end loop;
+  end loop;
+
+  assert v_erro = '', format(
+    'estas são internas e não podem ser chamadas pelo cliente: %s', v_erro);
+end $$;
+
+-- E o token do totem é o que separa uma quadra da outra: com o token de
+-- uma, não se escreve na fila de outra.
+do $$
+declare v_code text;
+begin
+  perform set_config('request.jwt.claim.sub', '', true);
+  begin
+    perform public.totem_screen('token-que-ninguem-emitiu');
+    assert false, 'token inventado deveria ser recusado';
+  exception when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    assert v_code = 'NQ037', format('esperava NQ037, obtive %s', v_code);
+  end;
 end $$;
 
 rollback;
