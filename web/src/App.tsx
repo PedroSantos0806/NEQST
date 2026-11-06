@@ -126,9 +126,19 @@ export function App() {
       */}
       <Route path="/fila" element={<Fila />} />
 
-      <Route path="/" element={<Protected><Parks /></Protected>} />
-      <Route path="/parque/:parkId" element={<Protected><Park /></Protected>} />
-      <Route path="/quadra/:courtId" element={<Protected><Court /></Protected>} />
+      {/*
+        Ler a fila não pede conta nenhuma.
+
+        É a fase 1 do app no handoff: acompanhar a quadra de qualquer
+        lugar. Quem ESCREVE na fila é o totem e o QR da quadra, então
+        estas três telas abrem para quem passar — e, sem sessão, elas
+        mesmas escondem as ações que exigiriam uma.
+      */}
+      <Route path="/" element={<Parks />} />
+      <Route path="/parque/:parkId" element={<Park />} />
+      <Route path="/quadra/:courtId" element={<Court />} />
+
+      {/* Perfil e administração continuam sendo de quem tem conta. */}
       <Route path="/perfil" element={<Protected><Profile /></Protected>} />
       <Route path="/admin" element={<Protected><AdminOnly /></Protected>} />
 

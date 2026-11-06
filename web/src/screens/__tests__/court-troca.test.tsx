@@ -27,6 +27,19 @@ vi.mock("react-router-dom", () => ({
   useSearchParams: () => [new URLSearchParams(), () => undefined],
 }));
 
+// A sessão: é ela que separa quem lê a quadra de quem tem conta.
+const auth = vi.hoisted(() => ({ session: null as unknown }));
+
+vi.mock("../../hooks/useAuth", () => ({
+  useAuth: () => ({ session: auth.session, loading: false, signOut: () => Promise.resolve() }),
+}));
+
+vi.mock("../../lib/party", () => ({
+  savedParty: () => null,
+  rememberParty: () => undefined,
+  forgetParty: () => undefined,
+}));
+
 vi.mock("../../hooks/useLiveCourt", () => ({
   useLiveCourt: () => ({
     data: screen.current,
@@ -120,6 +133,7 @@ function render(state: CourtScreen): string {
 describe("a troca de quadra na tela do celular", () => {
   beforeEach(() => {
     screen.current = null;
+    auth.session = { user: { id: "user-1" } };
   });
 
   it("quadra livre não fala de chamada nem de troca", () => {
@@ -246,5 +260,33 @@ describe("a troca de quadra na tela do celular", () => {
     const html = render(state);
     expect(html).toContain("voltaram para o fim da fila");
     expect(html).toContain("ninguém sai da fila por ter jogado");
+  });
+
+  it("quem abre a quadra sem conta lê tudo e é mandado para o totem", () => {
+    auth.session = null;
+    const state = base();
+    state.is_live = true;
+    state.match = null;
+    state.queue = [item({ is_mine: false, is_called: false, status: "waiting", team_label: "Marina Souza" })];
+    state.queue_length = 1;
+
+    const html = render(state);
+    // O caminho de escrita, dito onde a pessoa está olhando.
+    expect(html).toContain("Para entrar na fila");
+    expect(html).toContain("totem que fica na quadra");
+    expect(html).toContain("QR Code impresso");
+    expect(html).toContain("Não precisa de cadastro");
+    // E nenhuma porta para uma conta que não existe mais.
+    expect(html).not.toContain("Entrar na Fila");
+    expect(html).not.toContain("Entrar no grupo de um amigo");
+    // Mas a fila continua visível: é para isso que ele abriu a tela.
+    expect(html).toContain("Marina Souza");
+  });
+
+  it("com conta, o caminho antigo de entrar na fila continua ali", () => {
+    const state = base();
+    const html = render(state);
+    expect(html).toContain("Entrar na Fila");
+    expect(html).not.toContain("Para entrar na fila");
   });
 });

@@ -54,26 +54,31 @@ export function Parks() {
             }}
           />
         </div>
-        <button
-          type="button"
-          className="press"
-          onClick={() => navigate("/perfil")}
-          aria-label="Abrir perfil"
-          style={{ width: 44, height: 44, borderRadius: 10, border: "2px solid var(--green)", fontSize: 15, fontWeight: 700, ...avatar }}
-        >
-          {initialsOf(name)}
-        </button>
+        {/* Sem conta não há perfil a abrir, e um avatar com "?" só
+            convidaria a procurar um login que não existe mais. */}
+        {name && (
+          <button
+            type="button"
+            className="press"
+            onClick={() => navigate("/perfil")}
+            aria-label="Abrir perfil"
+            style={{ width: 44, height: 44, borderRadius: 10, border: "2px solid var(--green)", fontSize: 15, fontWeight: 700, ...avatar }}
+          >
+            {initialsOf(name)}
+          </button>
+        )}
       </header>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 14, fontWeight: 500, color: "var(--green)" }}>
-          {greeting()}, {firstName(name)}
+          {name ? `${greeting()}, ${firstName(name)}` : greeting()}
         </div>
         <h1 className="bb" style={{ margin: 0, fontSize: 50, lineHeight: 0.9 }}>
           Onde você vai jogar hoje?
         </h1>
         <p style={{ margin: 0, fontSize: 14, lineHeight: 1.45, color: "var(--green)" }}>
           Escolha o parque para ver as quadras, o placar e a fila ao vivo.
+          {!name && " Para entrar na fila, use o totem da quadra ou escaneie o QR dela."}
         </p>
       </div>
 

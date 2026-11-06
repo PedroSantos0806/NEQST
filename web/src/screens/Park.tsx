@@ -61,20 +61,23 @@ export function Park() {
             <span className="script" style={{ fontSize: 38, lineHeight: 1, color: "var(--green)" }}>Neqst</span>
             <span style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--ocre)", border: "1.5px solid var(--green)" }} />
           </div>
-          <button
-            type="button"
-            className="press"
-            onClick={() => navigate("/perfil")}
-            aria-label="Abrir perfil"
-            style={{ width: 44, height: 44, borderRadius: 10, border: "2px solid var(--green)", fontSize: 15, fontWeight: 700, ...avatar }}
-          >
-            {initialsOf(name)}
-          </button>
+          {/* Sem conta não há perfil a abrir. */}
+          {name && (
+            <button
+              type="button"
+              className="press"
+              onClick={() => navigate("/perfil")}
+              aria-label="Abrir perfil"
+              style={{ width: 44, height: 44, borderRadius: 10, border: "2px solid var(--green)", fontSize: 15, fontWeight: 700, ...avatar }}
+            >
+              {initialsOf(name)}
+            </button>
+          )}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 500, color: "var(--green)" }}>
-            {greeting()}, {firstName(name)}
+            {name ? `${greeting()}, ${firstName(name)}` : greeting()}
           </div>
           <h1 className="bb" style={{ margin: 0, fontSize: 46, lineHeight: 0.92 }}>Escolha sua quadra</h1>
           <button

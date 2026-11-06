@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useLiveCourt, useTicker } from "../hooks/useLiveCourt";
+import { useAuth } from "../hooks/useAuth";
+import { savedParty } from "../lib/party";
 import { SURFACE_COLOR, eta, hhmm, mmss, surfaceTextColor } from "../lib/format";
 import { rememberCourt, rememberPark } from "../lib/nav";
-import { ErrorState, Loading } from "../components/ui";
+import { buttonStyle, ErrorState, Loading } from "../components/ui";
 import { RacketStack } from "../components/Racket";
 import { BottomNav } from "../components/BottomNav";
 import { CallOverlay, StartedOverlay, SuccessOverlay } from "../components/Overlays";
@@ -29,6 +31,7 @@ type Flow =
 
 export function Court() {
   const { courtId } = useParams<{ courtId: string }>();
+  const { session } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { data, error, loading, refresh } = useLiveCourt(courtId);
@@ -150,6 +153,11 @@ export function Court() {
   const changeLeft = handover
     ? Math.max(0, Math.floor((new Date(handover.until).getTime() - now) / 1000))
     : 0;
+
+  // Quem abre a quadra sem conta: lê tudo, e escreve pelo totem ou pelo
+  // QR impresso. Não é um estado de erro — desde o totem é o normal.
+  const visitor = !session;
+  const myParty = visitor ? savedParty() : null;
 
   const playingHere = group?.status === "playing";
   const needsMyCheckIn = Boolean(playingHere && !group?.checked_in);
@@ -691,11 +699,36 @@ export function Court() {
           />
         )}
 
-        {hostMode && host && !group && (data.can_join || joinedElsewhere) && (
+        {/*
+          Sem conta, entrar na fila é no totem da quadra ou pelo QR
+          impresso nela — e é por isso que este cartão aponta para lá em
+          vez de oferecer um login que não existe mais.
+        */}
+        {visitor && data.court_accepting && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10 }}>
+            <span style={{ fontSize: 13, lineHeight: 1.45 }}>
+              <strong>Para entrar na fila</strong>, use o totem que fica na quadra, ou aponte a
+              câmera para o QR Code impresso nela. Não precisa de cadastro: é só o seu nome e
+              quantas pessoas vão jogar.
+            </span>
+            {myParty && (
+              <button
+                type="button"
+                className="press"
+                onClick={() => navigate("/fila")}
+                style={{ ...buttonStyle("primary"), minHeight: 48 }}
+              >
+                Ver a minha vaga na fila
+              </button>
+            )}
+          </div>
+        )}
+
+        {!visitor && hostMode && host && !group && (data.can_join || joinedElsewhere) && (
           <AskForQr hostName={host.host_name} />
         )}
 
-        {!group && (data.can_join || joinedElsewhere) && (
+        {!visitor && !group && (data.can_join || joinedElsewhere) && (
           <button
             type="button"
             className="press"
@@ -709,7 +742,7 @@ export function Court() {
           </button>
         )}
 
-        {!group && !data.can_join && !joinedElsewhere && !data.court_accepting && !data.can_open_host && (
+        {!visitor && !group && !data.can_join && !joinedElsewhere && !data.court_accepting && !data.can_open_host && (
           <div style={{ padding: 12, background: "var(--chalk)", border: "1.5px dashed rgba(47,70,41,.4)", borderRadius: 10, fontSize: 13, color: "var(--green)", textAlign: "center" }}>
             Esta quadra não está aceitando fila agora.
           </div>
