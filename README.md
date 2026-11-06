@@ -33,6 +33,12 @@ Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
   próximo entra sozinho, a pergunta "quer sair ou voltar pro fim da
   fila?" para quem acabou, e as pausas de manutenção, que não têm
   duração. Conta ficou só para administrar quadra.
+- [Sprint 9](docs/sprint9.md) — **a fila é única por quadra** (tablet,
+  QR e NFC alimentam a mesma fila, na ordem de chegada) e dá para
+  **entrar em um grupo que já está na fila, sem aprovação de ninguém**:
+  toca no grupo, escreve o nome, está dentro — pelo tablet ou pelo
+  celular. Cada pessoa do grupo passa a existir no banco, com o próprio
+  token quando entrou pelo celular.
 
 O que difere entre web e app (push, QR Code, CORS, login) está em
 [docs/plataformas.md](docs/plataformas.md). A resposta à auditoria de

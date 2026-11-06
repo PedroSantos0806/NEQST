@@ -349,7 +349,9 @@
 
 .totem-row {
   display: grid;
-  grid-template-columns: 3.4cqh 1fr auto;
+  /* posição · nome · (entrar) · previsão — o botão é opcional, e
+     `auto auto` deixa a previsão encostada à direita com ou sem ele. */
+  grid-template-columns: 3.4cqh 1fr auto auto;
   align-items: center;
   gap: 1.4cqh;
   padding: 1.1cqh 1.4cqh;
@@ -398,6 +400,31 @@
 .totem-row.next .who span,
 .totem-row.next .when span {
   color: rgba(16, 20, 9, 0.72);
+}
+
+/* O "+ Entrar" na linha do grupo: alvo de dedo, sem roubar a linha do
+   nome. Fica entre o nome e a previsão, que é onde o olho já está. */
+.totem-rowjoin {
+  background: var(--t-ink);
+  color: var(--paper);
+  border: 0;
+  border-radius: 4px;
+  padding: 1.1cqh 1.6cqh;
+  font-family: var(--display);
+  font-variation-settings: "wght" 800;
+  font-size: 1.7cqh;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.totem-row.next .totem-rowjoin {
+  background: var(--t-ink);
+  color: var(--ball);
+}
+
+.totem-rowjoin:active {
+  opacity: 0.75;
 }
 
 .totem-row .when {

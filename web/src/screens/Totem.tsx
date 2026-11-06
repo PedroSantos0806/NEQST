@@ -4,6 +4,7 @@ import {
   totemContinue,
   totemExitAnswer,
   totemJoin,
+  totemJoinGroup,
   totemPause,
   totemResume,
   totemScreen,
@@ -68,7 +69,18 @@ export function sizeHint(size: number): string {
     : "Conte todo mundo, você incluso. Dá para passar de 4.";
 }
 
-type Pending = { name: string; size: number };
+/**
+ * O que está sendo digitado.
+ *
+ * `group` preenchido = entrando no grupo de alguém que já está na fila:
+ * aí não se escolhe tamanho, porque o tamanho é do grupo, e a tela
+ * mostra em qual grupo a pessoa está entrando.
+ */
+type Pending = {
+  name: string;
+  size: number;
+  group?: { entry_id: string; label: string };
+};
 
 export function Totem() {
   const { token } = useParams<{ token: string }>();
@@ -77,7 +89,9 @@ export function Totem() {
   const [fail, setFail] = useState<string | null>(null);
   const [sound, setSound] = useState(soundReady());
   const [joining, setJoining] = useState<Pending | null>(null);
-  const [toast, setToast] = useState<{ position: number; text: string } | null>(null);
+  const [toast, setToast] = useState<
+    { position: number; text: string; joinedGroup?: boolean } | null
+  >(null);
   const [, setTick] = useState(0);
 
   // Memória do que já foi falado, para não repetir a cada leitura.
@@ -173,27 +187,37 @@ export function Totem() {
     setSound(ok);
   };
 
-  // ---------------- entrar na fila ----------------
+  // ---------------- entrar na fila, ou num grupo ----------------
   const confirmJoin = async () => {
     if (!token || !joining) return;
     const name = joining.name.trim();
     if (name.length < NAME_MIN) return;
 
     try {
-      const result = await totemJoin(token, name, joining.size);
+      const result = joining.group
+        ? await totemJoinGroup(token, joining.group.entry_id, name)
+        : await totemJoin(token, name, joining.size);
+
       setData(result.screen);
       setJoining(null);
       setFail(null);
 
       const row = result.screen.queue.find((q) => q.entry_id === result.entry_id);
       const when = row?.eta_at ? hhmmOf(new Date(row.eta_at)) : null;
+      const quantos = pessoas(result.party_size);
+
       setToast({
         position: result.position ?? result.screen.queue_count,
-        text: result.playing
-          ? `${name}, ${pessoas(joining.size)}. A quadra estava livre: podem entrar agora.`
-          : when
-            ? `${name}, ${pessoas(joining.size)}. Previsão de entrar às ${when}. Fique perto da quadra.`
-            : `${name}, ${pessoas(joining.size)}. A quadra está pausada, a previsão volta quando alguém retomar.`,
+        joinedGroup: result.joined_group,
+        text: result.joined_group
+          ? when
+            ? `${name}, você está com ${result.party_name}. ${quantos} no grupo, previsão de entrar às ${when}.`
+            : `${name}, você está com ${result.party_name}. ${quantos} no grupo.`
+          : result.playing
+            ? `${name}, ${quantos}. A quadra estava livre: podem entrar agora.`
+            : when
+              ? `${name}, ${quantos}. Previsão de entrar às ${when}. Fique perto da quadra.`
+              : `${name}, ${quantos}. A quadra está pausada, a previsão volta quando alguém retomar.`,
       });
       setTimeout(() => setToast(null), 4500);
     } catch (cause) {
@@ -219,6 +243,7 @@ export function Totem() {
       <TotemBoard
         data={data}
         onJoin={() => setJoining({ name: "", size: 2 })}
+        onJoinGroup={(entry_id, label) => setJoining({ name: "", size: 2, group: { entry_id, label } })}
         onContinue={() => void act(() => totemContinue(token))}
         onPause={(kind) => void act(() => totemPause(token, kind))}
         onResume={() => void act(() => totemResume(token))}
@@ -237,7 +262,13 @@ export function Totem() {
       {toast && (
         <div className="totem-toast">
           <div className="k">{toast.position}º</div>
-          <div className="t">{toast.position === 1 && data.playing ? "Você é o próximo" : "Você está na fila"}</div>
+          <div className="t">
+            {toast.joinedGroup
+              ? "Você entrou no grupo"
+              : toast.position === 1 && data.playing
+                ? "Você é o próximo"
+                : "Você está na fila"}
+          </div>
           <div className="s">{toast.text}</div>
         </div>
       )}
@@ -260,6 +291,7 @@ export function Totem() {
 export interface TotemBoardProps {
   data: TotemState;
   onJoin?: () => void;
+  onJoinGroup?: (entryId: string, label: string) => void;
   onContinue?: () => void;
   onPause?: (kind: PauseKind) => void;
   onResume?: () => void;
@@ -269,6 +301,7 @@ export interface TotemBoardProps {
 export function TotemBoard({
   data,
   onJoin,
+  onJoinGroup,
   onContinue,
   onPause,
   onResume,
@@ -404,7 +437,7 @@ export function TotemBoard({
         </span>
       </div>
 
-      <QueueList rows={data.queue} />
+      <QueueList rows={data.queue} onJoinGroup={onJoinGroup} />
 
       <div className="totem-actions">
         {data.can_continue && (
@@ -459,7 +492,13 @@ export function TotemBoard({
  * Volta sozinha para o topo depois de 12 segundos sem toque: a próxima
  * pessoa não pode encontrar a tela no meio da lista.
  */
-function QueueList({ rows }: { rows: TotemQueueRow[] }) {
+function QueueList({
+  rows,
+  onJoinGroup,
+}: {
+  rows: TotemQueueRow[];
+  onJoinGroup?: (entryId: string, label: string) => void;
+}) {
   const box = useRef<HTMLDivElement | null>(null);
   const lastTouch = useRef(0);
 
@@ -498,6 +537,20 @@ function QueueList({ rows }: { rows: TotemQueueRow[] }) {
               {row.is_next ? " · próximo" : ""}
             </span>
           </div>
+          {/*
+            Entrar no grupo é sem aprovação: o botão está na linha do
+            grupo, e tocar nele só pede o nome. Quem está esperando de pé
+            não vai procurar isso num menu.
+          */}
+          {onJoinGroup && row.can_join && (
+            <button
+              type="button"
+              className="totem-rowjoin"
+              onClick={() => onJoinGroup(row.entry_id, row.name)}
+            >
+              + Entrar
+            </button>
+          )}
           <div className="when">
             {row.eta_seconds === null ? (
               <>
@@ -551,7 +604,14 @@ function JoinOverlay({
 
   return (
     <div className="totem-overlay">
-      <h2>Entrar na fila</h2>
+      <h2>{draft.group ? "Entrar no grupo" : "Entrar na fila"}</h2>
+
+      {draft.group && (
+        <div className="totem-notice">
+          Você está entrando no grupo de <b>{draft.group.label}</b>. Escreva o seu nome e
+          vocês jogam juntos — o tempo de quadra é o mesmo.
+        </div>
+      )}
 
       <div className="totem-field">
         <label htmlFor="totem-name">Seu nome e sobrenome</label>
@@ -561,6 +621,7 @@ function JoinOverlay({
         </div>
       </div>
 
+      {!draft.group && (
       <div className="totem-field">
         <label htmlFor="totem-size">Quantas pessoas vão jogar</label>
         <div className="totem-stepper" id="totem-size">
@@ -579,6 +640,7 @@ function JoinOverlay({
         </div>
         <div className="totem-hint">{sizeHint(draft.size)}</div>
       </div>
+      )}
 
       <div className="totem-kb">
         {ROWS.map((row, i) => (

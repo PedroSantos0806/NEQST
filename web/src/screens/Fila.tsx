@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { partyExitAnswer, partyLeave, partyScreen, scanJoinParty } from "../lib/api";
+import {
+  partyExitAnswer,
+  partyLeave,
+  partyScreen,
+  scanJoinGroup,
+  scanJoinParty,
+  scanQueue,
+} from "../lib/api";
 import { mmss } from "../lib/format";
 import { forgetParty, rememberParty, savedParty } from "../lib/party";
 import { buttonStyle, ErrorState, fieldStyle, Loading } from "../components/ui";
-import type { PartyScreen, ScanResult } from "../lib/types";
+import type { PartyScreen, ScanResult, TotemQueueRow, TotemState } from "../lib/types";
 
 /**
  * A fila no celular de quem entrou pelo QR ou pela tag NFC.
@@ -24,6 +31,87 @@ const NAME_MAX = 40;
 
 type Mode = { kind: "join"; scan: ScanResult } | { kind: "watch" } | { kind: "lost" };
 
+/**
+ * Os grupos que já estão na fila, para entrar em um deles.
+ *
+ * Sem aprovação de ninguém: toca no grupo e está dentro, no lugar que o
+ * grupo já tem na fila. O tamanho que a pessoa escolheu acima não vale
+ * aqui — o tamanho é do grupo. É a mesma coisa que o `+ Entrar` de cada
+ * linha do totem, só que no celular.
+ *
+ * Sem rede de propósito: recebe a fila já lida e desenha, para o teste
+ * poder ler o texto sem fingir um banco.
+ */
+export function Grupos({
+  queue,
+  ready,
+  nameReady,
+  onJoin,
+}: {
+  queue: TotemQueueRow[];
+  /** Falso enquanto falta o nome ou uma chamada está em curso. */
+  ready: boolean;
+  /** Só o nome: é o que decide se vale explicar o que falta fazer. */
+  nameReady: boolean;
+  onJoin: (entryId: string) => void;
+}) {
+  const grupos = queue.filter((row) => row.can_join);
+  if (grupos.length === 0) return null;
+
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <h2
+        style={{
+          margin: "6px 0 0",
+          fontSize: 13,
+          fontWeight: 800,
+          letterSpacing: ".08em",
+          textTransform: "uppercase",
+          color: "var(--green)",
+        }}
+      >
+        Ou entre em um grupo que já está na fila
+      </h2>
+      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: "var(--muted)" }}>
+        Vocês jogam juntos, no lugar que o grupo já tem na fila. Não precisa de
+        aprovação de ninguém.
+      </p>
+
+      {grupos.map((row) => (
+        <button
+          key={row.entry_id}
+          type="button"
+          className="press"
+          disabled={!ready}
+          onClick={() => onJoin(row.entry_id)}
+          style={{
+            ...buttonStyle("ghost", !ready),
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            textAlign: "left",
+          }}
+        >
+          <span style={{ display: "flex", flexDirection: "column" }}>
+            <strong style={{ fontSize: 14 }}>{row.name}</strong>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>
+              {row.position}º da fila · {row.label}
+            </span>
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 800 }}>Entrar</span>
+        </button>
+      ))}
+
+      {!nameReady && (
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+          Escreva o seu nome acima para poder entrar em um grupo.
+        </span>
+      )}
+    </section>
+  );
+}
+
 export function Fila() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -36,6 +124,9 @@ export function Fila() {
 
   const [name, setName] = useState("");
   const [size, setSize] = useState(2);
+  // A fila da quadra, lida com o scan token SEM gastá-lo: é o que deixa
+  // a pessoa escolher entre criar uma party e entrar num grupo.
+  const [court, setCourt] = useState<TotemState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<PartyScreen | null>(null);
@@ -46,6 +137,15 @@ export function Fila() {
   useEffect(() => {
     if (handoff) navigate(location.pathname, { replace: true, state: null });
   }, [handoff, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (mode.kind !== "join") return;
+    let alive = true;
+    scanQueue(mode.scan.scanToken)
+      .then((value) => { if (alive) setCourt(value); })
+      .catch(() => { if (alive) setCourt(null); });
+    return () => { alive = false; };
+  }, [mode]);
 
   const refresh = useCallback(async () => {
     const saved = savedParty();
@@ -101,10 +201,38 @@ export function Fila() {
     }
   }
 
+  async function joinGroup(entryId: string) {
+    if (mode.kind !== "join") return;
+    const clean = name.trim();
+    if (clean.length < NAME_MIN) return;
+
+    setBusy(true);
+    try {
+      const result = await scanJoinGroup(mode.scan.scanToken, entryId, clean);
+      rememberParty({
+        token: result.party_token,
+        courtId: result.court_id,
+        name: clean,
+        size: result.party_size,
+      });
+      setMode({ kind: "watch" });
+      setError(null);
+      await refresh();
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function leave() {
     const saved = savedParty();
     if (!saved) return;
-    if (!window.confirm("Sair da fila? Para voltar você precisa escanear o QR de novo.")) return;
+    const party = data?.my_party;
+    const pergunta = party?.in_group
+      ? "Sair do grupo? Quem ficar continua na fila, e para voltar você escaneia o QR de novo."
+      : "Sair da fila? Para voltar você precisa escanear o QR de novo.";
+    if (!window.confirm(pergunta)) return;
 
     setBusy(true);
     try {
@@ -222,6 +350,13 @@ export function Fila() {
         >
           {busy ? "Entrando…" : "Entrar na fila"}
         </button>
+
+        <Grupos
+          queue={court?.queue ?? []}
+          ready={ready && !busy}
+          nameReady={ready}
+          onJoin={(entryId) => void joinGroup(entryId)}
+        />
       </div>
     );
   }
@@ -246,7 +381,9 @@ export function Fila() {
               : "Você está na fila"}
         </h1>
         <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
-          {me.name} · {me.label}
+          {me.in_group
+            ? `${me.my_name}, com ${me.members.filter((m) => m.name !== me.my_name).map((m) => m.name).join(", ")} · ${me.label}`
+            : `${me.name} · ${me.label}`}
         </p>
       </header>
 
@@ -359,7 +496,11 @@ export function Fila() {
         onClick={() => void leave()}
         style={buttonStyle("ghost", busy)}
       >
-        {playing ? "Encerrar e sair da quadra" : "Sair da fila"}
+        {playing
+          ? "Encerrar e sair da quadra"
+          : me.in_group
+            ? "Sair do grupo"
+            : "Sair da fila"}
       </button>
 
       <p style={{ margin: 0, fontSize: 12, color: "var(--muted)", lineHeight: 1.45 }}>
