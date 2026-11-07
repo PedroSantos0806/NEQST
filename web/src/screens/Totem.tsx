@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
+  queueJoin,
+  queueJoinGroup,
+  queueScreen,
   totemContinue,
   totemExitAnswer,
   totemJoin,
@@ -9,16 +12,31 @@ import {
   totemResume,
   totemScreen,
 } from "../lib/api";
+import { rememberParty, savedParty } from "../lib/party";
 import { mmss } from "../lib/format";
 import { SOUNDS, soundReady, unlockSound } from "../lib/sound";
-import type { PauseKind, TotemQueueRow, TotemState } from "../lib/types";
+import type { PauseKind, QueueJoinResult, TotemQueueRow, TotemState } from "../lib/types";
 import "./totem.css";
 
 /**
- * O totem da quadra.
+ * A tela da fila da quadra — a mesma nos dois caminhos de entrada.
  *
- * Um aparelho por quadra, retrato, travado em modo quiosque, aberto o
- * dia inteiro. Não tem conta de ninguém: a credencial é o token do
+ * `/totem/<token do aparelho>`  o tablet parado na quadra, que além de
+ *                               entrar na fila opera a quadra: pausa,
+ *                               retoma, continua o jogo e responde a
+ *                               pergunta de saída.
+ * `/fila/<quadra>`              o link público, onde o QR da placa
+ *                               leva. Mesma tela, mesma fila, mesmo
+ *                               botão de entrar — sem os comandos de
+ *                               operação, e com o teclado do próprio
+ *                               celular em vez do da tela.
+ *
+ * Uma tela só porque é uma fila só: o que muda entre tablet e celular é
+ * quem está autorizado a operar a quadra, não o que a pessoa vê nem
+ * como ela entra.
+ *
+ * No tablet: um aparelho por quadra, retrato, travado em modo quiosque,
+ * aberto o dia inteiro. Não tem conta de ninguém: a credencial é o token do
  * link, e a pessoa que chega digita nome e sobrenome no teclado da
  * própria tela.
  *
@@ -82,8 +100,26 @@ type Pending = {
   group?: { entry_id: string; label: string };
 };
 
+/**
+ * De onde esta tela fala com o banco.
+ *
+ * `device` é o tablet, com o token que o /admin gerou: só ele opera a
+ * quadra. `court` é o link público da placa, que lê a fila e entra
+ * nela, e nada além disso.
+ */
+type Source =
+  | { kind: "device"; token: string }
+  | { kind: "court"; ref: string };
+
 export function Totem() {
-  const { token } = useParams<{ token: string }>();
+  const { token, quadra } = useParams<{ token?: string; quadra?: string }>();
+
+  const source = useMemo<Source | null>(
+    () => (token ? { kind: "device", token } : quadra ? { kind: "court", ref: quadra } : null),
+    [token, quadra],
+  );
+  const operator = source?.kind === "device";
+
   const [data, setData] = useState<TotemState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fail, setFail] = useState<string | null>(null);
@@ -93,6 +129,8 @@ export function Totem() {
     { position: number; text: string; joinedGroup?: boolean } | null
   >(null);
   const [, setTick] = useState(0);
+  // Vaga guardada neste navegador, para oferecer o atalho de acompanhar.
+  const [mine, setMine] = useState(() => Boolean(savedParty()));
 
   // Memória do que já foi falado, para não repetir a cada leitura.
   const saidOneMinute = useRef<string | null>(null);
@@ -102,15 +140,17 @@ export function Totem() {
   const wasPaused = useRef(false);
 
   const load = useCallback(async () => {
-    if (!token) return;
+    if (!source) return;
     try {
-      const fresh = await totemScreen(token);
+      const fresh = source.kind === "device"
+        ? await totemScreen(source.token)
+        : await queueScreen(source.ref);
       setData(fresh);
       setError(null);
     } catch (cause) {
       setError((cause as Error).message);
     }
-  }, [token]);
+  }, [source]);
 
   // O totem conversa com o servidor de 5 em 5 segundos: é essa leitura
   // que marca o aparelho como vivo e executa o que já venceu (o fim do
@@ -189,14 +229,34 @@ export function Totem() {
 
   // ---------------- entrar na fila, ou num grupo ----------------
   const confirmJoin = async () => {
-    if (!token || !joining) return;
+    if (!source || !joining) return;
     const name = joining.name.trim();
     if (name.length < NAME_MIN) return;
 
     try {
-      const result = joining.group
-        ? await totemJoinGroup(token, joining.group.entry_id, name)
-        : await totemJoin(token, name, joining.size);
+      const result = source.kind === "device"
+        ? joining.group
+          ? await totemJoinGroup(source.token, joining.group.entry_id, name)
+          : await totemJoin(source.token, name, joining.size)
+        : joining.group
+          ? await queueJoinGroup(source.ref, joining.group.entry_id, name)
+          : await queueJoin(source.ref, name, joining.size);
+
+      /*
+       * Pelo link, a pessoa fica com o segredo da própria vaga: é o que
+       * deixa ela ver a posição e sair sozinha depois, em /fila. No
+       * totem não vem token nenhum — a tela é de todos.
+       */
+      const mine = source.kind === "court" ? (result as QueueJoinResult).party_token : null;
+      if (mine) {
+        rememberParty({
+          token: mine,
+          courtId: result.screen.court.id,
+          name,
+          size: result.party_size,
+        });
+        setMine(true);
+      }
 
       setData(result.screen);
       setJoining(null);
@@ -226,7 +286,9 @@ export function Totem() {
     }
   };
 
-  if (!token) return <div className="totem"><div className="totem-boot">Link do totem inválido.</div></div>;
+  if (!source) {
+    return <div className="totem"><div className="totem-boot">Link da quadra inválido.</div></div>;
+  }
 
   if (!data) {
     return (
@@ -244,15 +306,33 @@ export function Totem() {
         data={data}
         onJoin={() => setJoining({ name: "", size: 2 })}
         onJoinGroup={(entry_id, label) => setJoining({ name: "", size: 2, group: { entry_id, label } })}
-        onContinue={() => void act(() => totemContinue(token))}
-        onPause={(kind) => void act(() => totemPause(token, kind))}
-        onResume={() => void act(() => totemResume(token))}
-        onExitAnswer={(back) => void act(() => totemExitAnswer(token, back))}
+        /*
+          Pausar, retomar, continuar o jogo e responder a pergunta de
+          saída é operar a quadra, e isso segue sendo do aparelho que o
+          /admin registrou. Pelo link público estes comandos não existem
+          — e, como o quadro só desenha o que recebe, não aparecem.
+        */
+        onContinue={operator ? () => void act(() => totemContinue(token!)) : undefined}
+        onPause={operator ? (kind) => void act(() => totemPause(token!, kind)) : undefined}
+        onResume={operator ? () => void act(() => totemResume(token!)) : undefined}
+        onExitAnswer={operator ? (back) => void act(() => totemExitAnswer(token!, back)) : undefined}
       />
+
+      {/*
+        O atalho para a vaga de quem entrou por este celular: é de lá
+        que a pessoa sai da fila sozinha. No tablet nunca aparece, que
+        é uma tela compartilhada e não tem vaga de ninguém.
+      */}
+      {!operator && mine && (
+        <Link to="/fila" className="totem-mine">
+          Minha vaga
+        </Link>
+      )}
 
       {joining && (
         <JoinOverlay
           draft={joining}
+          native={!operator}
           onChange={setJoining}
           onCancel={() => setJoining(null)}
           onConfirm={() => void confirmJoin()}
@@ -275,7 +355,12 @@ export function Totem() {
 
       {fail && <div className="totem-fail">{fail}</div>}
 
-      {!sound && (
+      {/*
+        A voz é do aparelho da quadra: é ele que chama o próximo em voz
+        alta para quem está em volta. No celular de quem passou não há
+        o que anunciar, então o botão não existe.
+      */}
+      {operator && !sound && (
         <button type="button" className="totem-sound" onClick={() => void enableSound()}>
           Ativar som
         </button>
@@ -407,11 +492,11 @@ export function TotemBoard({
       {data.armed_pause && (
         <div className="totem-notice">
           <b>{data.armed_pause.label} agendado.</b> Começa quando este jogo acabar e segura a
-          fila até alguém retomar. Toque de novo para cancelar.
+          fila até alguém retomar.{onPause ? " Toque de novo para cancelar." : ""}
         </div>
       )}
 
-      {data.exit_ask && (
+      {data.exit_ask && onExitAnswer && (
         <div className="totem-exitask">
           <div className="q">
             <b>{data.exit_ask.name}</b>
@@ -440,8 +525,8 @@ export function TotemBoard({
       <QueueList rows={data.queue} onJoinGroup={onJoinGroup} />
 
       <div className="totem-actions">
-        {data.can_continue && (
-          <button type="button" className="totem-btn totem-continue" onClick={() => onContinue?.()}>
+        {data.can_continue && onContinue && (
+          <button type="button" className="totem-btn totem-continue" onClick={() => onContinue()}>
             <b>Continuar jogando</b>
             <span>Mais {data.slot_minutes} min, só com a fila vazia</span>
           </button>
@@ -455,7 +540,7 @@ export function TotemBoard({
         {/* Um comando de cada vez: com a quadra pausada o grupo de
             pausar sai e entra o Retomar. Três botões de pausar ao lado
             de um de despausar é confusão garantida. */}
-        {paused ? (
+        {!onPause && !onResume ? null : paused ? (
           <button type="button" className="totem-btn totem-resume" onClick={() => onResume?.()}>
             <b>Retomar a quadra</b>
           </button>
@@ -571,19 +656,25 @@ function QueueList({
 }
 
 /**
- * Entrar na fila: nome no teclado da tela e quantas pessoas.
+ * Entrar na fila: o nome, e quantas pessoas vão jogar.
  *
- * O teclado é desenhado aqui, e não é o do sistema: em modo quiosque o
- * teclado do sistema costuma estar bloqueado, e quando não está é uma
- * rota de fuga da aplicação.
+ * No totem o teclado é desenhado aqui, e não é o do sistema: em modo
+ * quiosque o teclado do sistema costuma estar bloqueado, e quando não
+ * está é uma rota de fuga da aplicação.
+ *
+ * No celular de quem leu o QR nada disso vale — o aparelho é da pessoa,
+ * e o teclado dela já sabe acento, sobrenome e corretor. Aí `native`
+ * troca o teclado da tela por um campo de verdade.
  */
-function JoinOverlay({
+export function JoinOverlay({
   draft,
+  native,
   onChange,
   onCancel,
   onConfirm,
 }: {
   draft: Pending;
+  native?: boolean;
   onChange: (next: Pending) => void;
   onCancel: () => void;
   onConfirm: () => void;
@@ -603,7 +694,7 @@ function JoinOverlay({
   const ready = draft.name.trim().length >= NAME_MIN;
 
   return (
-    <div className="totem-overlay">
+    <div className={native ? "totem-overlay native" : "totem-overlay"}>
       <h2>{draft.group ? "Entrar no grupo" : "Entrar na fila"}</h2>
 
       {draft.group && (
@@ -615,10 +706,28 @@ function JoinOverlay({
 
       <div className="totem-field">
         <label htmlFor="totem-name">Seu nome e sobrenome</label>
-        <div className={draft.name.trim() ? "val" : "val ph"} id="totem-name">
-          {draft.name.trim() ? draft.name : "toque nas letras"}
-          <span className="totem-caret" />
-        </div>
+        {native ? (
+          <input
+            id="totem-name"
+            className="totem-input"
+            type="text"
+            autoFocus
+            autoComplete="name"
+            enterKeyHint="done"
+            maxLength={NAME_MAX}
+            placeholder="Ex.: Marina Souza"
+            value={draft.name}
+            onChange={(event) => onChange({ ...draft, name: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && draft.name.trim().length >= NAME_MIN) onConfirm();
+            }}
+          />
+        ) : (
+          <div className={draft.name.trim() ? "val" : "val ph"} id="totem-name">
+            {draft.name.trim() ? draft.name : "toque nas letras"}
+            <span className="totem-caret" />
+          </div>
+        )}
       </div>
 
       {!draft.group && (
@@ -642,6 +751,7 @@ function JoinOverlay({
       </div>
       )}
 
+      {!native && (
       <div className="totem-kb">
         {ROWS.map((row, i) => (
           <div key={row} className="totem-kbrow">
@@ -663,6 +773,7 @@ function JoinOverlay({
           </button>
         </div>
       </div>
+      )}
 
       <div className="totem-ovfoot">
         <button type="button" className="totem-cancel" onClick={onCancel}>

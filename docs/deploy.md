@@ -296,7 +296,16 @@ values ('quadra-central', 'Quadra Central', 'Av. Paulista, 1000', -23.561414, -4
 update public.profiles set role = 'admin' where email = 'voce@example.com';
 ```
 
-Depois gere e imprima os códigos: [`qr-codes.md`](qr-codes.md).
+Depois, a placa da quadra: `/admin` → a quadra → **QR**. O código
+carrega o link da fila daquela quadra (`/fila/<slug>`), e o mesmo
+endereço serve para gravar na tag NFC — ver
+[`qr-codes.md`](qr-codes.md) e a [Sprint 10](sprint10.md).
+
+E o aparelho da quadra: `/admin` → a quadra → **Totem** → **Gerar
+link**. Esse link (`/totem/<token>`) abre a mesma tela da fila e é o
+único que opera a quadra — pausas, Retomar, Continuar jogando e a
+pergunta de saída. Abra em modo quiosque e toque **Ativar som** uma vez,
+que é o que libera a voz no navegador.
 
 ## 10. CI
 

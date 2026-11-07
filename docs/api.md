@@ -545,6 +545,33 @@ await supabase.rpc("admin_pilot_stats", { p_park_id: null, p_from: "2026-10-01",
 `can_show_invite`, `host_name`) e `can_open_host`; os itens da fila e o
 turno, `is_offline` e `offline_label`.
 
+### RPCs da Sprint 10 — a fila pelo link da quadra
+
+O caminho de entrada de quem chega na quadra, sem conta, sem scan token
+e sem GPS: o QR da placa leva ao link, e o link é a tela da fila.
+`p_court_ref` aceita o **uuid** ou o **slug** da quadra, o que vier na
+URL.
+
+```ts
+// Ler a fila. Mesmo payload de totem_screen, e a leitura também faz o
+// relógio da quadra andar (tick).
+await supabase.rpc("queue_screen", { p_court_ref: "ibira-3" });
+
+// Entrar na fila: nome e sobrenome, e quantas pessoas vão jogar.
+// Devolve `party_token` (uma única vez — guardar no navegador),
+// `court_id` e a tela já atualizada em `screen`.
+await supabase.rpc("queue_join", { p_court_ref: "ibira-3", p_name: "Marina Souza", p_size: 2 });
+
+// Entrar no grupo de quem já está na fila, pelo mesmo link.
+await supabase.rpc("queue_join_group", {
+  p_court_ref: "ibira-3", p_entry_id: entryId, p_name: "Bruno Dias",
+});
+```
+
+Operar a quadra **não** está aqui: pausar, retomar, continuar o jogo e
+responder a pergunta de saída seguem sendo `totem_*`, com o token do
+aparelho que o `/admin` registrou. O link só lê a fila e entra nela.
+
 ### Tempo real (US-03)
 
 ```ts
@@ -620,3 +647,7 @@ tabela acima.
 | `NQ033` | Só quem organiza a fila faz isso |
 | `NQ034` | A fila desta quadra não está aberta |
 | `NQ035` | No modo anfitrião a distância não pode ser desligada |
+| `NQ037` | Token de totem desconhecido ou revogado |
+| `NQ041` | Nome fora de 2 a 40 letras |
+| `NQ042` | Party (ou grupo) fora de 1 a 20 pessoas |
+| `NQ043` | A fila da quadra está no teto (50 parties esperando) |

@@ -26,7 +26,15 @@ export async function callFunction<T>(
     headers: {
       "Content-Type": "application/json",
       apikey: env.supabaseAnonKey,
-      ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      /*
+       * Sem sessão vai a própria chave publicável como bearer, que é o
+       * que o supabase-js já faz nas chamadas de banco. O gateway das
+       * Edge Functions exige que o header exista: sem ele a resposta é
+       * um 401 "Missing authorization header" de antes da função, com a
+       * função publicada e correta. Era o erro que aparecia para quem
+       * abria o link da quadra sem conta.
+       */
+      Authorization: `Bearer ${session?.access_token ?? env.supabaseAnonKey}`,
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
