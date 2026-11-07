@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { emMin, pessoas, sizeHint, TotemBoard } from "../Totem";
+import { emMin, JoinOverlay, pessoas, sizeHint, TotemBoard } from "../Totem";
 import type { TotemState } from "../../lib/types";
 
 /**
@@ -72,7 +72,31 @@ function row(over: Partial<TotemState["queue"][number]> = {}): TotemState["queue
   };
 }
 
-const render = (data: TotemState) => renderToStaticMarkup(<TotemBoard data={data} />);
+const noop = () => undefined;
+
+/**
+ * O quadro como o TABLET o desenha: com os comandos de operação.
+ *
+ * Quem opera a quadra é o aparelho que o /admin registrou, e o quadro
+ * só desenha o comando que recebeu — então passar as funções aqui é o
+ * que diz "esta é a tela do totem". O link público da quadra desenha o
+ * mesmo quadro sem elas, e é o que o último teste deste bloco cobre.
+ */
+const render = (data: TotemState) =>
+  renderToStaticMarkup(
+    <TotemBoard
+      data={data}
+      onJoin={noop}
+      onContinue={noop}
+      onPause={noop}
+      onResume={noop}
+      onExitAnswer={noop}
+    />,
+  );
+
+/** O quadro como o LINK PÚBLICO o desenha: só ler a fila e entrar. */
+const renderPublic = (data: TotemState) =>
+  renderToStaticMarkup(<TotemBoard data={data} onJoin={noop} onJoinGroup={noop} />);
 
 describe("o totem", () => {
   it("quadra livre convida a entrar e não mostra relógio", () => {
@@ -220,6 +244,37 @@ describe("o totem", () => {
     expect(html).toContain("1 pessoa");
   });
 
+  it("pelo link público não há comando de operar a quadra", () => {
+    const data = base();
+    data.state = "paused";
+    data.can_continue = true;
+    data.pause = {
+      kind: "rega",
+      label: "Rega da quadra",
+      desc: "Estão regando a quadra.",
+      since: new Date(Date.now() - 20_000).toISOString(),
+      seconds: 20,
+    };
+    data.exit_ask = { entry_id: "p1", name: "Rafael Lima", text: "Rafael Lima, acabou seu tempo." };
+    data.queue = [row()];
+    data.queue_count = 1;
+
+    const html = renderPublic(data);
+
+    // O que a pessoa continua vendo: o estado da quadra e a fila.
+    expect(html).toContain("Pausada · Rega da quadra");
+    expect(html).toContain("Marina Souza");
+    expect(html).toContain("Entrar na fila");
+    expect(html).toContain("+ Entrar");
+
+    // O que só o aparelho da quadra faz.
+    expect(html).not.toContain("Retomar a quadra");
+    expect(html).not.toContain("Pausar a quadra");
+    expect(html).not.toContain("Continuar jogando");
+    expect(html).not.toContain("Voltar pra fila");
+    expect(html).not.toContain("acabou seu tempo");
+  });
+
   it("cada grupo da fila tem um + Entrar quando o totem aceita", () => {
     const data = base();
     data.state = "playing";
@@ -234,7 +289,7 @@ describe("o totem", () => {
     // Com `onJoinGroup`, cada linha que aceita gente ganha o botão: é o
     // caminho de quem chegou depois e vai jogar com quem já esperava,
     // sem ninguém aprovar nada.
-    const html = renderToStaticMarkup(<TotemBoard data={data} onJoinGroup={() => undefined} />);
+    const html = renderToStaticMarkup(<TotemBoard data={data} onJoin={noop} onJoinGroup={noop} />);
     expect(html.match(/\+ Entrar</g)).toHaveLength(2);
 
     // Sem a função, o quadro é só leitura — é o que a tela de parede usa.
@@ -249,7 +304,7 @@ describe("o totem", () => {
     data.queue = [row({ can_join: false })];
     data.queue_count = 1;
 
-    const html = renderToStaticMarkup(<TotemBoard data={data} onJoinGroup={() => undefined} />);
+    const html = renderToStaticMarkup(<TotemBoard data={data} onJoin={noop} onJoinGroup={noop} />);
     expect(html).not.toContain("+ Entrar");
   });
 });
@@ -269,5 +324,47 @@ describe("os textos da entrada na fila", () => {
   it("a dica do contador muda quando a party passa de 4", () => {
     expect(sizeHint(2)).toContain("Dá para passar de 4");
     expect(sizeHint(6)).toContain("revezar entre as 6 pessoas");
+  });
+});
+
+describe("o teclado de entrar na fila", () => {
+  const draft = { name: "", size: 2 };
+
+  it("no totem, as letras estão na tela", () => {
+    const html = renderToStaticMarkup(
+      <JoinOverlay draft={draft} onChange={noop} onCancel={noop} onConfirm={noop} />,
+    );
+    expect(html).toContain("Entrar na fila");
+    expect(html).toContain("toque nas letras");
+    expect(html).toContain("espaço");
+    expect(html).toContain("apagar");
+    // Teclado desenhado, e nenhum campo de texto: em quiosque o teclado
+    // do sistema costuma estar bloqueado — e é rota de fuga quando não.
+    expect(html).not.toContain("<input");
+  });
+
+  it("no celular, o teclado é o do celular", () => {
+    const html = renderToStaticMarkup(
+      <JoinOverlay draft={draft} native onChange={noop} onCancel={noop} onConfirm={noop} />,
+    );
+    expect(html).toContain("<input");
+    expect(html).toContain("Ex.: Marina Souza");
+    expect(html).not.toContain("toque nas letras");
+    expect(html).not.toContain("espaço");
+  });
+
+  it("entrando num grupo, não se escolhe tamanho", () => {
+    const html = renderToStaticMarkup(
+      <JoinOverlay
+        draft={{ name: "Bruno", size: 2, group: { entry_id: "e1", label: "Marina Souza" } }}
+        native
+        onChange={noop}
+        onCancel={noop}
+        onConfirm={noop}
+      />,
+    );
+    expect(html).toContain("Entrar no grupo");
+    expect(html).toContain("Marina Souza");
+    expect(html).not.toContain("Quantas pessoas vão jogar");
   });
 });

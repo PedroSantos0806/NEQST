@@ -25,6 +25,7 @@ import type {
   ProfileSummary,
   PartyJoinResult,
   PartyScreen,
+  QueueJoinResult,
   PauseKind,
   ScanResult,
   TotemJoinResult,
@@ -249,7 +250,36 @@ export const totemExitAnswer = (token: string, back: boolean) =>
   rpc<TotemState>("totem_exit_answer", { p_token: token, p_back: back });
 
 // ---------------------------------------------------------------------
-// O QR e a tag NFC: entrar na fila pelo celular, sem conta
+// A fila pelo link da quadra
+// ---------------------------------------------------------------------
+/*
+ * O caminho que o QR da placa usa desde a Sprint 10: o QR só leva ao
+ * link da quadra, e a tela que abre é a mesma do totem. Não há scan
+ * token, não há GPS — o que autoriza ler e entrar é saber o link, que
+ * está impresso numa placa em lugar público.
+ *
+ * `ref` é o uuid ou o slug da quadra, o que vier na URL.
+ */
+
+export const queueScreen = (ref: string) =>
+  rpc<TotemState>("queue_screen", { p_court_ref: ref });
+
+export const queueJoin = (ref: string, name: string, size: number) =>
+  rpc<QueueJoinResult>("queue_join", {
+    p_court_ref: ref,
+    p_name: name,
+    p_size: size,
+  });
+
+export const queueJoinGroup = (ref: string, entryId: string, name: string) =>
+  rpc<QueueJoinResult>("queue_join_group", {
+    p_court_ref: ref,
+    p_entry_id: entryId,
+    p_name: name,
+  });
+
+// ---------------------------------------------------------------------
+// O scan token: o caminho antigo, que o app com conta ainda usa
 // ---------------------------------------------------------------------
 
 /** A fila da quadra pelo scan token, SEM gastar o token. */

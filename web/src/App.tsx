@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { Parks } from "./screens/Parks";
 import { Park } from "./screens/Park";
 import { Court } from "./screens/Court";
@@ -85,14 +85,44 @@ function AdminOnly() {
   );
 }
 
+/** QR antigo (/q/<quadra>?v&s) → o link da fila daquela quadra. */
+function QrToFila() {
+  const { courtId } = useParams<{ courtId: string }>();
+  return <Navigate to={`/fila/${courtId}`} replace />;
+}
+
 export function App() {
   return (
     <Routes>
       <Route path="/entrar" element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
-      {/* O QR impresso aponta para cá; o da tela de quem está na fila, para /q/h */}
-      <Route path="/q/:courtId" element={<ScanLanding />} />
+      {/*
+        O QR da placa levava para cá e a tela tentava validar scan,
+        assinatura e GPS antes de deixar entrar. Desde a Sprint 10 o QR
+        só leva ao link da fila — então esta rota existe para que os QRs
+        JÁ IMPRESSOS continuem valendo, redirecionando para lá. A
+        assinatura (?v&s) deixa de ser conferida porque não gateia mais
+        nada: entrar na fila é público.
+
+        /q/h/:code é outra coisa e continua como era — é o convite de
+        quem abriu a fila no modo anfitrião, que depende de conta.
+      */}
+      <Route path="/q/:courtId" element={<QrToFila />} />
       <Route path="/q/h/:code" element={<ScanLanding />} />
+
+      {/*
+        A fila da quadra pelo link: a MESMA tela do totem, sem os
+        comandos de operação. É onde o QR da placa cai e é o que o
+        tablet abre, cada um com a sua credencial.
+      */}
+      <Route
+        path="/fila/:quadra"
+        element={
+          <Suspense fallback={<Loading what="Carregando a quadra" />}>
+            <Totem />
+          </Suspense>
+        }
+      />
 
       {/*
         O totem da quadra. Sem Protected de propósito: a credencial é o

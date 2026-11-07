@@ -39,6 +39,13 @@ Backend do **App de Fila para Quadras de Tênis**, atendendo a **web** e o
   toca no grupo, escreve o nome, está dentro — pelo tablet ou pelo
   celular. Cada pessoa do grupo passa a existir no banco, com o próprio
   token quando entrou pelo celular.
+- [Sprint 10](docs/sprint10.md) — **a fila é um link**: o aparelho da
+  quadra e o QR impresso abrem a MESMA tela da fila, com o mesmo botão
+  de entrar; o QR deixa de ser meio de entrada e passa a ser só o
+  caminho até o link. Operar a quadra (pausas, Retomar, Continuar)
+  continua sendo do aparelho registrado no `/admin`. Inclui a correção
+  do `Missing authorization header` que aparecia para quem abria a
+  quadra sem conta.
 
 O que difere entre web e app (push, QR Code, CORS, login) está em
 [docs/plataformas.md](docs/plataformas.md). A resposta à auditoria de

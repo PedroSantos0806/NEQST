@@ -241,6 +241,19 @@ export interface TotemJoinResult {
   screen: TotemState;
 }
 
+/**
+ * Entrar na fila pelo link da quadra.
+ *
+ * É o `TotemJoinResult` mais duas coisas que só existem fora do totem:
+ * a quadra (o link pode ter vindo por slug) e o token da pessoa, que o
+ * banco devolve uma única vez e o navegador guarda.
+ */
+export interface QueueJoinResult extends TotemJoinResult {
+  court_id: string;
+  /** Nulo quando o toque veio do próprio totem: lá ninguém guarda nada. */
+  party_token: string | null;
+}
+
 /** A tela de quem entrou pelo QR, no celular. */
 export interface PartyScreen extends TotemState {
   my_party: {

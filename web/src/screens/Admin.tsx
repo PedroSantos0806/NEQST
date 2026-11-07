@@ -535,10 +535,24 @@ function TotemPanel({
   );
 }
 
-/** O QR assinado, pronto para imprimir e colar no poste da rede. */
+/**
+ * O QR da quadra, pronto para imprimir e colar no poste da rede.
+ *
+ * Desde a Sprint 10 o QR carrega o LINK DA FILA daquela quadra, e nada
+ * mais: quem aponta a câmera cai na mesma tela do tablet e entra na
+ * fila digitando nome e sobrenome. Antes ele carregava uma URL assinada
+ * que a borda conferia junto com o GPS — o que exigia conta, dava erro
+ * no celular de quem não tem, e para uma placa pública protegia pouco.
+ *
+ * O link usa o slug (`/fila/ibira-3`) quando a quadra tem um: o QR fica
+ * com menos módulos, lê de mais longe, e dá para digitar à mão quando a
+ * câmera não colabora.
+ */
 function QrPanel({ qr, onClose }: { qr: CourtQr; onClose: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
+
+  const filaUrl = new URL(`/fila/${qr.slug ?? qr.courtId}`, window.location.origin).toString();
 
   useEffect(() => {
     let alive = true;
@@ -547,7 +561,7 @@ function QrPanel({ qr, onClose }: { qr: CourtQr; onClose: () => void }) {
     void import("qrcode")
       .then(({ default: QRCode }) => {
         if (!alive || !canvas.current) return;
-        return QRCode.toCanvas(canvas.current, qr.printUrl, {
+        return QRCode.toCanvas(canvas.current, filaUrl, {
           width: 240,
           margin: 1,
           color: { dark: "#0A0E0B", light: "#FFFFFF" },
@@ -556,7 +570,7 @@ function QrPanel({ qr, onClose }: { qr: CourtQr; onClose: () => void }) {
       })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
-  }, [qr.printUrl]);
+  }, [filaUrl]);
 
   return (
     <div className="fade" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: 14, background: "var(--chalk)", border: "1.5px solid var(--green)", borderRadius: 10 }}>
@@ -571,8 +585,8 @@ function QrPanel({ qr, onClose }: { qr: CourtQr; onClose: () => void }) {
         ? <p style={{ margin: 0, fontSize: 12, color: "var(--rust)" }}>Não foi possível desenhar o QR aqui. Use o endereço abaixo.</p>
         : <canvas ref={canvas} style={{ background: "#FFFFFF", borderRadius: 8 }} />}
 
-      <code style={{ fontSize: 10, lineHeight: 1.4, wordBreak: "break-all", color: "var(--muted)", textAlign: "center" }}>
-        {qr.printUrl}
+      <code style={{ fontSize: 11, lineHeight: 1.4, wordBreak: "break-all", color: "var(--ink)", textAlign: "center", fontWeight: 700 }}>
+        {filaUrl}
       </code>
 
       {/*
@@ -588,14 +602,14 @@ function QrPanel({ qr, onClose }: { qr: CourtQr; onClose: () => void }) {
           <button
             type="button"
             className="press"
-            onClick={() => void navigator.clipboard?.writeText(`${qr.printUrl}&m=nfc`)}
+            onClick={() => void navigator.clipboard?.writeText(filaUrl)}
             style={{ minHeight: 30, padding: "0 8px", background: "transparent", border: "1.5px solid rgba(47,70,41,.3)", borderRadius: 6, fontSize: 11, fontWeight: 700, color: "var(--green)" }}
           >
             Copiar
           </button>
         </div>
         <code style={{ display: "block", fontSize: 10, lineHeight: 1.4, wordBreak: "break-all", color: "var(--muted)" }}>
-          {qr.printUrl}&amp;m=nfc
+          {filaUrl}
         </code>
       </div>
 
@@ -603,7 +617,7 @@ function QrPanel({ qr, onClose }: { qr: CourtQr; onClose: () => void }) {
         <button
           type="button"
           className="press"
-          onClick={() => void navigator.clipboard?.writeText(qr.printUrl)}
+          onClick={() => void navigator.clipboard?.writeText(filaUrl)}
           style={{ ...buttonStyle("ghost"), minHeight: 38, fontSize: 12 }}
         >
           Copiar endereço
@@ -614,7 +628,9 @@ function QrPanel({ qr, onClose }: { qr: CourtQr; onClose: () => void }) {
       </div>
 
       <p style={{ margin: 0, fontSize: 11, lineHeight: 1.4, color: "var(--muted)", textAlign: "center" }}>
-        Cole na quadra. A câmera do celular abre o app direto nesta quadra.
+        Cole na quadra. A câmera do celular abre a fila desta quadra, com o botão de
+        entrar — sem conta e sem instalar nada. Os QRs antigos continuam valendo:
+        o endereço deles redireciona para cá.
       </p>
     </div>
   );

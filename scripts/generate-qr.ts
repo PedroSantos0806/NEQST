@@ -3,10 +3,12 @@
  * Gera o conteúdo assinado dos QR Codes das quadras (US-02) e, opcionalmente,
  * uma folha HTML pronta para impressão.
  *
- * O QR impresso usa o App Link https (APP_BASE_URL): a câmera nativa do
- * Android abre o app da Play Store se instalado e, se não, o site. O
- * esquema `neqst:` continua sendo emitido para referência, mas não é o
- * que vai no papel — câmera de sistema não abre esquema próprio.
+ * O QR impresso carrega o LINK DA FILA daquela quadra
+ * (APP_BASE_URL/fila/<slug>): a câmera abre a mesma tela do tablet, com
+ * o botão de entrar na fila, sem conta e sem instalar nada. A URL
+ * assinada e o esquema `neqst:` continuam sendo emitidos porque o app
+ * com conta ainda usa esse caminho para provar presença — mas não são o
+ * que vai no papel.
  *
  * Uso:
  *   export SUPABASE_URL=...
@@ -46,7 +48,9 @@ function arg(flag: string): string | undefined {
   return index >= 0 ? Deno.args[index + 1] : undefined;
 }
 
-function htmlSheet(items: Array<Court & { printUrl: string; payload: string }>): string {
+function htmlSheet(
+  items: Array<Court & { printUrl: string; signedUrl: string; payload: string }>,
+): string {
   const cards = items.map((court) => `
     <article class="card">
       <h2>${court.name}</h2>
@@ -119,7 +123,16 @@ async function main(): Promise<void> {
   const items = await Promise.all(
     data.map(async (court) => ({
       ...court,
-      printUrl: await buildCourtQrUrl(court.id, court.qr_secret_version, secret, appBaseUrl),
+      /*
+       * O que vai no papel desde a Sprint 10: o link da fila daquela
+       * quadra. A câmera abre a mesma tela do tablet, com o botão de
+       * entrar na fila, e ninguém precisa de conta. O slug deixa o QR
+       * com menos módulos — lê de mais longe e dá para digitar à mão.
+       */
+      printUrl: `${appBaseUrl.replace(/\/+$/, "")}/fila/${court.slug}`,
+      // A URL assinada e o esquema próprio seguem sendo emitidos: o
+      // app com conta ainda usa esse caminho para provar presença.
+      signedUrl: await buildCourtQrUrl(court.id, court.qr_secret_version, secret, appBaseUrl),
       payload: await buildCourtQrPayload(court.id, court.qr_secret_version, secret),
     })),
   );
@@ -127,6 +140,7 @@ async function main(): Promise<void> {
   for (const court of items) {
     console.log(`${court.name} (${court.slug}) v${court.qr_secret_version}`);
     console.log(`  impresso : ${court.printUrl}`);
+    console.log(`  assinado : ${court.signedUrl}`);
     console.log(`  esquema  : ${court.payload}\n`);
   }
 

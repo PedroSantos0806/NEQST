@@ -1,6 +1,25 @@
 # QR Codes das quadras (US-02)
 
-## Como funciona
+> **Desde a [Sprint 10](sprint10.md) o QR impresso não é mais este.**
+>
+> O que vai no papel agora é o **link da fila daquela quadra**
+> (`https://.../fila/<slug>`), e nada além disso: a câmera abre a mesma
+> tela do aparelho da quadra, com o botão de entrar na fila, e a pessoa
+> digita nome e sobrenome. Não há assinatura a conferir, não há scan
+> token e não há GPS no caminho de entrada — o que autoriza entrar é
+> saber o link, que está impresso numa placa pública. O preço dessa
+> escolha está escrito na seção 3 da [Sprint 10](sprint10.md).
+>
+> Os QRs **já impressos continuam valendo**: `/q/<quadra>` redireciona
+> para `/fila/<quadra>`.
+>
+> O que está descrito abaixo — o QR assinado, o scan token de 30
+> segundos, a validação de distância — **continua existindo** e continua
+> sendo o caminho do app com conta (modo anfitrião, "Entrando na
+> quadra", check-in). Só deixou de ser o caminho de quem chega na quadra
+> e quer entrar na fila.
+
+## Como funciona (o QR assinado, do fluxo com conta)
 
 O QR impresso é **estático e assinado**:
 

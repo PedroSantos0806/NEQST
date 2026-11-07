@@ -751,6 +751,15 @@
   gap: 1.2cqh;
 }
 
+/*
+ * Sem o teclado desenhado (celular), nada empurra o rodapé para baixo e
+ * Cancelar/Confirmar ficavam no meio da tela, longe do polegar. Aqui
+ * eles descem para o fim.
+ */
+.totem-overlay.native .totem-ovfoot {
+  margin-top: auto;
+}
+
 .totem-cancel,
 .totem-confirm {
   border-radius: 6px;
@@ -831,9 +840,15 @@
   line-height: 1.3;
 }
 
+/*
+ * O "Ativar som" fica no ALTO, não no rodapé: no rodapé ele cobria o
+ * primeiro botão de pausa num tablet em retrato — e era exatamente o
+ * botão que a pessoa da manutenção vai apertar. Some no primeiro toque,
+ * então ocupar o canto da faixa de identificação é barato.
+ */
 .totem-sound {
   position: absolute;
-  inset: auto auto 3cqh 3.2cqh;
+  inset: 8.5cqh 3.2cqh auto auto;
   z-index: 7;
   background: var(--t-ink);
   color: var(--paper);
@@ -865,4 +880,51 @@
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ---------------------------------------------------------------------
+   Os dois elementos que só existem no link público (Sprint 10).
+   --------------------------------------------------------------------- */
+
+/* O campo de texto de verdade, para o teclado do próprio celular. */
+.totem-input {
+  width: 100%;
+  padding: 1.6cqh 2cqh;
+  border: 0.28cqh solid var(--t-line);
+  border-radius: 1.4cqh;
+  background: var(--paper);
+  color: var(--t-ink);
+  font-family: var(--display);
+  font-size: 3cqh;
+  font-variation-settings: "wght" 700;
+  /* 16px é o mínimo que o Safari do iOS aceita sem dar zoom no campo —
+     e o zoom num quiosque, ou num celular na mão, desmonta a tela. */
+  min-height: 48px;
+}
+
+.totem-input:focus {
+  outline: 0.3cqh solid var(--ball);
+  border-color: var(--t-ink);
+}
+
+.totem-input::placeholder {
+  color: var(--t-mute);
+  font-variation-settings: "wght" 500;
+}
+
+/* O atalho para a vaga guardada neste navegador. */
+.totem-mine {
+  position: absolute;
+  right: 3.2cqh;
+  bottom: 3cqh;
+  z-index: 3;
+  padding: 1.2cqh 2.2cqh;
+  border-radius: 999px;
+  background: var(--t-ink);
+  color: var(--paper);
+  font-family: var(--display);
+  font-size: 1.9cqh;
+  font-variation-settings: "wght" 800;
+  text-decoration: none;
+  letter-spacing: -0.01em;
 }

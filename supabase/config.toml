@@ -78,8 +78,14 @@ secret = "env(SUPABASE_AUTH_APPLE_SECRET)"
 enabled = true
 policy = "oneshot"
 
+# A função valida o QR, a distância e o corpo da requisição por conta
+# própria, e usa `optionalUser` de propósito: desde a Sprint 8 escanear a
+# quadra não pede conta. Com `verify_jwt = true` o gateway do Supabase
+# recusava a chamada ANTES da função rodar, respondendo "Missing
+# authorization header" — que é o erro que aparecia para quem abria o
+# link da quadra sem estar logado.
 [functions.scan-court]
-verify_jwt = true
+verify_jwt = false
 
 [functions.join-queue]
 verify_jwt = true
