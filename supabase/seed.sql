@@ -1,0 +1,1 @@
+-- Seed: funis, etapas e motivos de perda entram na S1.
