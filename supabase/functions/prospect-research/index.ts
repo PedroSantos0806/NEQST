@@ -106,7 +106,7 @@ serve(async (req) => {
         text: site
           ? `Texto do site oficial (${site.url}):\n${site.text}`
           : 'O lead não tem site acessível. Não há texto de pesquisa: use só os dados do cadastro e deixe claro o que é incerto.',
-        sources: site ? [{ uri: site.url, title: 'Site oficial' }] : [],
+        sources: site ? site.pages.map((uri, i) => ({ uri, title: i === 0 ? 'Site oficial' : `Site: ${new URL(uri).pathname}` })) : [],
         queries: [],
       }
     }
