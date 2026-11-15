@@ -13,6 +13,7 @@ import { ContactsPage } from '@/features/contacts/ContactsPage'
 import { BoardPage } from '@/features/deals/BoardPage'
 import { DealDetailPage } from '@/features/deals/DealDetailPage'
 import { TasksPage } from '@/features/activities/TasksPage'
+import { ProspectingPage } from '@/features/prospecting/ProspectingPage'
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
                 <Route path="locais" element={<LocationsPage />} />
                 <Route path="tarefas" element={<TasksPage />} />
                 <Route path="negocios/:id" element={<DealDetailPage />} />
+                <Route path="prospeccao" element={<ProspectingPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
             </Route>

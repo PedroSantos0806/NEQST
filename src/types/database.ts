@@ -650,6 +650,232 @@ export type Database = {
         }
         Relationships: []
       }
+      prospect_research: {
+        Row: {
+          court_types: string[]
+          created_at: string
+          created_by: string | null
+          decision_makers: Json
+          estimated_courts: number | null
+          has_internet_hint: string | null
+          hooks: Json
+          id: string
+          model: string | null
+          opportunities: Json
+          prospect_id: string
+          score: number | null
+          score_reason: string | null
+          search_queries: Json
+          sources: Json
+          suggested_message: string | null
+          summary: string | null
+          updated_at: string
+        }
+        Insert: {
+          court_types?: string[]
+          created_at?: string
+          created_by?: string | null
+          decision_makers?: Json
+          estimated_courts?: number | null
+          has_internet_hint?: string | null
+          hooks?: Json
+          id?: string
+          model?: string | null
+          opportunities?: Json
+          prospect_id: string
+          score?: number | null
+          score_reason?: string | null
+          search_queries?: Json
+          sources?: Json
+          suggested_message?: string | null
+          summary?: string | null
+          updated_at?: string
+        }
+        Update: {
+          court_types?: string[]
+          created_at?: string
+          created_by?: string | null
+          decision_makers?: Json
+          estimated_courts?: number | null
+          has_internet_hint?: string | null
+          hooks?: Json
+          id?: string
+          model?: string | null
+          opportunities?: Json
+          prospect_id?: string
+          score?: number | null
+          score_reason?: string | null
+          search_queries?: Json
+          sources?: Json
+          suggested_message?: string | null
+          summary?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prospect_research_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prospect_research_prospect_id_fkey"
+            columns: ["prospect_id"]
+            isOneToOne: false
+            referencedRelation: "prospects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prospect_searches: {
+        Row: {
+          city: string
+          company_type: Database["public"]["Enums"]["company_type"] | null
+          created_at: string
+          created_by: string | null
+          id: string
+          query: string
+          total_found: number
+          total_new: number
+          updated_at: string
+        }
+        Insert: {
+          city: string
+          company_type?: Database["public"]["Enums"]["company_type"] | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          query: string
+          total_found?: number
+          total_new?: number
+          updated_at?: string
+        }
+        Update: {
+          city?: string
+          company_type?: Database["public"]["Enums"]["company_type"] | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          query?: string
+          total_found?: number
+          total_new?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prospect_searches_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prospects: {
+        Row: {
+          address: string | null
+          city: string | null
+          company_id: string | null
+          company_type: Database["public"]["Enums"]["company_type"] | null
+          created_at: string
+          deal_id: string | null
+          discard_reason: string | null
+          google_maps_uri: string | null
+          google_place_id: string | null
+          id: string
+          last_error: string | null
+          name: string
+          owner_id: string | null
+          phone: string | null
+          rating: number | null
+          rating_count: number | null
+          raw: Json
+          search_id: string | null
+          state: string | null
+          status: Database["public"]["Enums"]["prospect_status"]
+          updated_at: string
+          website: string | null
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          company_id?: string | null
+          company_type?: Database["public"]["Enums"]["company_type"] | null
+          created_at?: string
+          deal_id?: string | null
+          discard_reason?: string | null
+          google_maps_uri?: string | null
+          google_place_id?: string | null
+          id?: string
+          last_error?: string | null
+          name: string
+          owner_id?: string | null
+          phone?: string | null
+          rating?: number | null
+          rating_count?: number | null
+          raw?: Json
+          search_id?: string | null
+          state?: string | null
+          status?: Database["public"]["Enums"]["prospect_status"]
+          updated_at?: string
+          website?: string | null
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          company_id?: string | null
+          company_type?: Database["public"]["Enums"]["company_type"] | null
+          created_at?: string
+          deal_id?: string | null
+          discard_reason?: string | null
+          google_maps_uri?: string | null
+          google_place_id?: string | null
+          id?: string
+          last_error?: string | null
+          name?: string
+          owner_id?: string | null
+          phone?: string | null
+          rating?: number | null
+          rating_count?: number | null
+          raw?: Json
+          search_id?: string | null
+          state?: string | null
+          status?: Database["public"]["Enums"]["prospect_status"]
+          updated_at?: string
+          website?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prospects_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prospects_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "deals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prospects_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prospects_search_id_fkey"
+            columns: ["search_id"]
+            isOneToOne: false
+            referencedRelation: "prospect_searches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stages: {
         Row: {
           alert_days: number | null
@@ -767,6 +993,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      qualify_prospect: {
+        Args: {
+          p_company_id?: string
+          p_company_type?: Database["public"]["Enums"]["company_type"]
+          p_pipeline_id: string
+          p_prospect_id: string
+        }
+        Returns: string
+      }
     }
     Enums: {
       activity_type:
@@ -790,6 +1025,12 @@ export type Database = {
       lifecycle_stage: "lead" | "qualified_lead" | "opportunity" | "customer"
       location_status: "prospect" | "pilot" | "client"
       pipeline_type: "sales" | "onboarding"
+      prospect_status:
+        | "new"
+        | "researching"
+        | "researched"
+        | "qualified"
+        | "discarded"
       timeline_entity: "deal" | "contact" | "company" | "location"
       timeline_event_type:
         | "created"
@@ -945,6 +1186,13 @@ export const Constants = {
       lifecycle_stage: ["lead", "qualified_lead", "opportunity", "customer"],
       location_status: ["prospect", "pilot", "client"],
       pipeline_type: ["sales", "onboarding"],
+      prospect_status: [
+        "new",
+        "researching",
+        "researched",
+        "qualified",
+        "discarded",
+      ],
       timeline_entity: ["deal", "contact", "company", "location"],
       timeline_event_type: [
         "created",
