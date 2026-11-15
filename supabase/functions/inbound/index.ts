@@ -197,9 +197,9 @@ async function handleMeta(req: Request) {
     const mode = u.searchParams.get('hub.mode')
     const token = u.searchParams.get('hub.verify_token') ?? ''
     if (mode === 'subscribe' && safeEqual(token, await secret('meta_verify_token'))) {
-      return new Response(u.searchParams.get('hub.challenge') ?? '', { status: 200 })
+      return new Response(u.searchParams.get('hub.challenge') ?? '', { status: 200, headers: cors })
     }
-    return new Response('Forbidden', { status: 403 })
+    return new Response('Forbidden', { status: 403, headers: cors })
   }
 
   const { raw, data } = await readBody(req)
