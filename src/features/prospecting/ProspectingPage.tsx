@@ -3,7 +3,7 @@ import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { Search, Star } from 'lucide-react'
+import { FileUp, Plus, Search, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +21,7 @@ import {
   type ProspectStatus,
 } from './api'
 import { ProspectPanel } from './ProspectPanel'
+import { AddProspectDialog, ImportProspectsDialog } from './ProspectDialogs'
 
 const QUERY_HINT: Record<string, string> = {
   public_operator: 'parque com quadras de beach tennis',
@@ -33,7 +34,10 @@ const QUERY_HINT: Record<string, string> = {
 const schema = z.object({
   company_type: z.string(),
   query: z.string().trim().min(3, 'O que buscar (mín. 3 letras)'),
-  city: z.string().trim().min(2, 'Informe a cidade'),
+  city: z
+    .string()
+    .trim()
+    .refine((v) => /^[^,]{2,},\s*[A-Za-z]{2}$/.test(v), 'Cidade e UF, ex.: Campinas, SP'),
 })
 type FormValues = z.infer<typeof schema>
 
@@ -49,7 +53,10 @@ const TAB_LABEL: Record<Tab, string> = { queue: 'Fila', qualified: 'Qualificados
 
 export function ProspectingPage() {
   const prospects = useProspects()
-  const search = useProspectSearch()
+  const [status, setStatus] = useState<string | null>(null)
+  const search = useProspectSearch(setStatus)
+  const [adding, setAdding] = useState(false)
+  const [importing, setImporting] = useState(false)
   useProspectsRealtime()
   const [tab, setTab] = useState<Tab>('queue')
   const [filter, setFilter] = useState('')
@@ -88,7 +95,8 @@ export function ProspectingPage() {
       { query: v.query, city: v.city, company_type: (v.company_type || null) as ProspectListItem['company_type'] },
       {
         onSuccess: (r) => {
-          toast.success(`${r.found} lugares encontrados`, {
+          const via = r.source === 'openstreetmap' ? ' no OpenStreetMap' : r.source === 'gemini_search' ? ' pela IA' : ' no Google'
+          toast.success(`${r.found} lugares encontrados${via}`, {
             description: r.new === r.found ? 'Todos novos na fila.' : `${r.new} novos; ${r.found - r.new} já estavam na fila.`,
           })
           setTab('queue')
@@ -99,7 +107,20 @@ export function ProspectingPage() {
 
   return (
     <section className="flex flex-col gap-5">
-      <PageHeader title="Prospecção" count={counts.queue} />
+      <PageHeader
+        title="Prospecção"
+        count={counts.queue}
+        actions={
+          <>
+            <Button variant="outline" onClick={() => setImporting(true)}>
+              <FileUp aria-hidden /> Importar planilha
+            </Button>
+            <Button className={actionButtonClass} onClick={() => setAdding(true)}>
+              <Plus aria-hidden /> Adicionar lead
+            </Button>
+          </>
+        }
+      />
 
       <form onSubmit={handleSubmit(onSearch)} className="grid gap-3 rounded-xl border border-border bg-card p-4 sm:grid-cols-2 sm:items-end xl:grid-cols-[12rem_1fr_14rem_auto]" noValidate>
         <Field label="Tipo" htmlFor="ps-type">
@@ -118,9 +139,14 @@ export function ProspectingPage() {
           <Input id="ps-city" placeholder="Ex.: Campinas, SP" aria-invalid={!!errors.city} {...register('city')} />
         </Field>
         <Button type="submit" disabled={search.isPending} className={cn(actionButtonClass, 'h-8')}>
-          <Search aria-hidden /> {search.isPending ? 'Buscando…' : 'Buscar no Google'}
+          <Search aria-hidden /> {search.isPending ? 'Buscando…' : 'Buscar lugares'}
         </Button>
       </form>
+      {status && (
+        <p role="status" className="-mt-2 text-sm text-muted-foreground">
+          {status}
+        </p>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,24rem)_1fr]">
         <div className="flex min-w-0 flex-col gap-3">
@@ -201,6 +227,17 @@ export function ProspectingPage() {
           )}
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        Lugares do mapa:{' '}
+        <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline underline-offset-4">
+          © OpenStreetMap contributors
+        </a>
+        . Parques e clubes/arenas com quadras mapeadas; a cobertura varia por cidade.
+      </p>
+
+      <AddProspectDialog open={adding} onOpenChange={setAdding} onAdded={(id) => { setTab('queue'); setSelectedId(id) }} />
+      <ImportProspectsDialog open={importing} onOpenChange={setImporting} />
     </section>
   )
 }

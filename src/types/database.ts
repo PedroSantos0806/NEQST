@@ -785,8 +785,12 @@ export type Database = {
           google_maps_uri: string | null
           google_place_id: string | null
           id: string
+          instagram: string | null
           last_error: string | null
+          mapped_courts: number | null
+          mapped_sports: string[]
           name: string
+          osm_id: string | null
           owner_id: string | null
           phone: string | null
           rating: number | null
@@ -811,8 +815,12 @@ export type Database = {
           google_maps_uri?: string | null
           google_place_id?: string | null
           id?: string
+          instagram?: string | null
           last_error?: string | null
+          mapped_courts?: number | null
+          mapped_sports?: string[]
           name: string
+          osm_id?: string | null
           owner_id?: string | null
           phone?: string | null
           rating?: number | null
@@ -837,8 +845,12 @@ export type Database = {
           google_maps_uri?: string | null
           google_place_id?: string | null
           id?: string
+          instagram?: string | null
           last_error?: string | null
+          mapped_courts?: number | null
+          mapped_sports?: string[]
           name?: string
+          osm_id?: string | null
           owner_id?: string | null
           phone?: string | null
           rating?: number | null

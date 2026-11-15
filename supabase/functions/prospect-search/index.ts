@@ -27,12 +27,16 @@ type Candidate = {
   rating: number | null
   rating_count: number | null
   raw: Record<string, unknown>
+  osm_id?: string | null
+  instagram?: string | null
+  mapped_courts?: number | null
+  mapped_sports?: string[]
 }
 
 // ---------------------------------------------------------------------------
 // Normalização
 // ---------------------------------------------------------------------------
-export function dedupeKey(name: string, city: string) {
+function dedupeKey(name: string, city: string) {
   const norm = (s: string) =>
     s
       .normalize('NFD')
@@ -192,15 +196,20 @@ serve(async (req) => {
 
   const supabase = await userClient(req)
   const placesKey = Deno.env.get('GOOGLE_PLACES_API_KEY')
-  const source = placesKey ? 'google_places' : 'gemini_search'
+  // Busca no Google pelo Gemini exige faturamento no Google Cloud; só liga com GEMINI_GROUNDING=on.
+  const geminiGrounding = Deno.env.get('GEMINI_GROUNDING') === 'on'
+  const source = placesKey ? 'google_places' : geminiGrounding ? 'gemini_search' : 'openstreetmap'
 
   let candidates: Candidate[]
   let sources: Source[] = []
   if (placesKey) {
     candidates = await fromPlaces(placesKey, query, city)
-  } else {
+  } else if (geminiGrounding) {
     requireEnv('GEMINI_API_KEY')
     ;({ list: candidates, sources } = await fromGemini(query, city, companyType))
+  } else {
+    // Sem Places nem busca do Gemini: a busca grátis no OpenStreetMap roda no navegador.
+    return json({ delegate: 'openstreetmap' })
   }
 
   const { data: search, error: searchError } = await supabase
@@ -223,6 +232,7 @@ serve(async (req) => {
 
   const keys = uniqueRows.map((r) => r.dedupe_key)
   const placeIds = uniqueRows.map((r) => r.google_place_id).filter((v): v is string => !!v)
+  const osmIds = uniqueRows.map((r) => r.osm_id).filter((v): v is string => !!v)
   const existing = new Set<string>()
   if (keys.length) {
     const { data } = await supabase.from('prospects').select('dedupe_key').in('dedupe_key', keys)
@@ -232,7 +242,16 @@ serve(async (req) => {
     const { data } = await supabase.from('prospects').select('google_place_id').in('google_place_id', placeIds)
     for (const r of data ?? []) if (r.google_place_id) existing.add(r.google_place_id)
   }
-  const fresh = uniqueRows.filter((r) => !existing.has(r.dedupe_key) && !(r.google_place_id && existing.has(r.google_place_id)))
+  if (osmIds.length) {
+    const { data } = await supabase.from('prospects').select('osm_id').in('osm_id', osmIds)
+    for (const r of data ?? []) if (r.osm_id) existing.add(r.osm_id)
+  }
+  const fresh = uniqueRows.filter(
+    (r) =>
+      !existing.has(r.dedupe_key) &&
+      !(r.google_place_id && existing.has(r.google_place_id)) &&
+      !(r.osm_id && existing.has(r.osm_id)),
+  )
 
   if (fresh.length) {
     const { error } = await supabase.from('prospects').insert(fresh)

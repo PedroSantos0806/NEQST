@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
-import type { Enums, Tables } from '@/types/database'
+import type { Enums, Tables, TablesInsert } from '@/types/database'
+import { dedupeKey, searchOsmAndSave } from './osm'
 
 export type Prospect = Tables<'prospects'>
 export type ProspectResearch = Tables<'prospect_research'>
@@ -68,11 +69,72 @@ export function useLatestResearch(prospectId: string | undefined) {
   })
 }
 
-export function useProspectSearch() {
+export type SearchResult = { found: number; new: number; source: 'google_places' | 'gemini_search' | 'openstreetmap' }
+
+/**
+ * Busca de leads. O servidor usa Google Places ou Gemini quando configurados;
+ * senão devolve `delegate: 'openstreetmap'` e a busca grátis roda aqui no navegador.
+ */
+export function useProspectSearch(onStatus?: (msg: string | null) => void) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { query: string; city: string; company_type: Enums<'company_type'> | null }) =>
-      invoke<{ found: number; new: number }>('prospect-search', v),
+    mutationFn: async (v: { query: string; city: string; company_type: Enums<'company_type'> | null }): Promise<SearchResult> => {
+      const r = await invoke<{ found?: number; new?: number; source?: SearchResult['source']; delegate?: 'openstreetmap' }>(
+        'prospect-search',
+        v,
+      )
+      if (r.delegate === 'openstreetmap') {
+        const res = await searchOsmAndSave(v, (msg) => onStatus?.(msg))
+        return { ...res, source: 'openstreetmap' }
+      }
+      return { found: r.found ?? 0, new: r.new ?? 0, source: r.source ?? 'google_places' }
+    },
+    onSettled: () => {
+      onStatus?.(null)
+      qc.invalidateQueries({ queryKey: ['prospects'] })
+    },
+  })
+}
+
+/** Lead cadastrado à mão (indicação, evento, lista). */
+export function useAddProspect() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (v: Omit<TablesInsert<'prospects'>, 'dedupe_key' | 'source'> & { source?: 'manual' | 'import' }) => {
+      const key = dedupeKey(v.name, v.city ?? '')
+      const { data: dup } = await supabase.from('prospects').select('id, status').eq('dedupe_key', key).maybeSingle()
+      if (dup) throw new Error('Este lead já está na prospecção (mesmo nome e cidade).')
+      return unwrap(
+        await supabase
+          .from('prospects')
+          .insert({ ...v, source: v.source ?? 'manual', dedupe_key: key })
+          .select('id')
+          .single(),
+      ) as { id: string }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['prospects'] }),
+  })
+}
+
+/** Importa linhas de planilha, pulando quem já está na fila. */
+export function useImportProspects() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (rows: Omit<TablesInsert<'prospects'>, 'dedupe_key' | 'source'>[]) => {
+      const withKeys = rows.map((r) => ({ ...r, source: 'import', dedupe_key: dedupeKey(r.name, r.city ?? '') }))
+      const unique = [...new Map(withKeys.map((r) => [r.dedupe_key, r])).values()]
+      const existing = new Set<string>()
+      for (let i = 0; i < unique.length; i += 200) {
+        const { data } = await supabase
+          .from('prospects')
+          .select('dedupe_key')
+          .in('dedupe_key', unique.slice(i, i + 200).map((r) => r.dedupe_key))
+        for (const r of data ?? []) if (r.dedupe_key) existing.add(r.dedupe_key)
+      }
+      const fresh = unique.filter((r) => !existing.has(r.dedupe_key))
+      for (let i = 0; i < fresh.length; i += 200) unwrap(await supabase.from('prospects').insert(fresh.slice(i, i + 200)))
+      return { total: rows.length, inserted: fresh.length, skipped: rows.length - fresh.length }
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['prospects'] }),
   })
 }

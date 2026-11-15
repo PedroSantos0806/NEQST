@@ -74,12 +74,27 @@ export function ProspectPanel({ prospect: p }: { prospect: ProspectListItem }) {
             )}
             {p.google_maps_uri && (
               <a href={p.google_maps_uri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline">
-                <ExternalLink className="size-3.5" aria-hidden /> Google Maps
+                <ExternalLink className="size-3.5" aria-hidden /> {p.source === 'openstreetmap' ? 'Ver no mapa' : 'Google Maps'}
+              </a>
+            )}
+            {p.instagram && (
+              <a
+                href={p.instagram.startsWith('http') ? p.instagram : `https://instagram.com/${p.instagram.replace(/^@/, '')}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+              >
+                <ExternalLink className="size-3.5" aria-hidden /> Instagram
               </a>
             )}
             {p.phone && (
               <span className="inline-flex items-center gap-1">
                 <Phone className="size-3.5" aria-hidden /> {formatPhone(p.phone)}
+              </span>
+            )}
+            {p.mapped_courts != null && (
+              <span className="text-muted-foreground">
+                {p.mapped_courts} quadras no mapa{p.mapped_sports.length ? ` (${p.mapped_sports.join(', ')})` : ''}
               </span>
             )}
             {p.rating != null && (
@@ -141,7 +156,7 @@ export function ProspectPanel({ prospect: p }: { prospect: ProspectListItem }) {
 
       {researching && !r && (
         <p className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">
-          Pesquisando site, notícias e redes do lead. Leva de 20 a 60 segundos.
+          Lendo o site do lead e montando o dossiê. Leva de 20 a 60 segundos.
         </p>
       )}
 
@@ -151,6 +166,7 @@ export function ProspectPanel({ prospect: p }: { prospect: ProspectListItem }) {
         !researching && (
           <p className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">
             Sem dossiê ainda. Clique em <strong>Pesquisar com IA</strong> para levantar ganchos, oportunidades e decisores.
+            {!p.website && ' Este lead não tem site cadastrado: o dossiê vai usar só nome, cidade e dados do mapa.'}
           </p>
         )
       ) : (
