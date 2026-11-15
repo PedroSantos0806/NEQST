@@ -24,6 +24,21 @@ export const LIFECYCLE_LABEL: Record<Enums<'lifecycle_stage'>, string> = {
   customer: 'Cliente',
 }
 
+export const DEAL_CONTACT_ROLE_LABEL: Record<Enums<'deal_contact_role'>, string> = {
+  decision_maker: 'Decisor',
+  influencer: 'Influenciador',
+  operational: 'Operacional',
+}
+
+export const ACTIVITY_TYPE_LABEL: Record<Enums<'activity_type'>, string> = {
+  task: 'Tarefa',
+  call: 'Ligação',
+  meeting: 'Reunião',
+  visit: 'Visita',
+  whatsapp: 'WhatsApp',
+  email: 'E-mail',
+}
+
 export function options<T extends string>(labels: Record<T, string>) {
   return (Object.keys(labels) as T[]).map((value) => ({ value, label: labels[value] }))
 }

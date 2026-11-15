@@ -6,9 +6,10 @@ import type { Tables, TablesInsert } from '@/types/database'
 export type Location = Tables<'locations'>
 export type LocationListItem = Location & { company: { id: string; name: string } | null }
 
-export function useLocations(filter: { companyId?: string } = {}) {
+export function useLocations({ enabled = true, ...filter }: { companyId?: string; enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['locations', filter],
+    enabled,
     queryFn: async () => {
       let q = supabase.from('locations').select('*, company:companies(id, name)').order('name')
       if (filter.companyId) q = q.eq('company_id', filter.companyId)

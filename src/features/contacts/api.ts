@@ -9,9 +9,10 @@ export type ContactListItem = Contact & {
   owner: { full_name: string | null; email: string | null } | null
 }
 
-export function useContacts(filter: { companyId?: string } = {}) {
+export function useContacts({ enabled = true, ...filter }: { companyId?: string; enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['contacts', filter],
+    enabled,
     queryFn: async () => {
       let q = supabase
         .from('contacts')

@@ -11,6 +11,7 @@ import { CompaniesPage } from '@/features/companies/CompaniesPage'
 import { CompanyDetailPage } from '@/features/companies/CompanyDetailPage'
 import { LocationsPage } from '@/features/locations/LocationsPage'
 import { ContactsPage } from '@/features/contacts/ContactsPage'
+import { BoardPage } from '@/features/deals/BoardPage'
 
 export default function App() {
   return (
@@ -21,16 +22,7 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route element={<RequireAuth />}>
               <Route element={<AppLayout />}>
-                <Route
-                  index
-                  element={
-                    <PagePlaceholder
-                      title="Funis"
-                      sprint="Sprint 2"
-                      description="Kanban dos 4 funis com arrastar e soltar, totais por coluna e alerta de parado."
-                    />
-                  }
-                />
+                <Route index element={<BoardPage />} />
                 <Route path="contatos" element={<ContactsPage />} />
                 <Route path="empresas" element={<CompaniesPage />} />
                 <Route path="empresas/:id" element={<CompanyDetailPage />} />

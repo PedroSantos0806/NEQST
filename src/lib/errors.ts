@@ -8,7 +8,32 @@ const UNIQUE_MESSAGES: Record<string, string> = {
   companies_cnpj_key: 'Já existe uma empresa com este CNPJ.',
 }
 
+/** Rótulos das chaves aceitas em stages.required_fields. */
+export const REQUIRED_FIELD_LABEL: Record<string, string> = {
+  company_id: 'empresa',
+  court_count: 'nº de quadras',
+  price_per_court: 'preço por quadra',
+  value: 'valor',
+  expected_close_date: 'data prevista',
+  owner_id: 'responsável',
+  locations: 'local',
+  contacts: 'contato',
+  decision_maker: 'decisor',
+}
+
+export const requiredFieldLabel = (key: string) =>
+  REQUIRED_FIELD_LABEL[key] ?? (key.startsWith('custom.') ? key.slice(7).replace(/_/g, ' ') : key)
+
+/** Campos que faltam quando o banco bloqueia o avanço de etapa (erro P0422). */
+export function missingRequiredFields(error: unknown): string[] | null {
+  const e = error as Partial<PostgrestError> | undefined
+  if (e?.code !== 'P0422') return null
+  return (e.details ?? '').split(',').filter(Boolean)
+}
+
 export function friendlyError(error: unknown): string {
+  const missing = missingRequiredFields(error)
+  if (missing) return `Para avançar, preencha: ${missing.map(requiredFieldLabel).join(', ')}.`
   const e = error as Partial<PostgrestError> | undefined
   if (e?.code === '23505') {
     const hit = Object.keys(UNIQUE_MESSAGES).find((k) => e.message?.includes(k) || e.details?.includes(k))

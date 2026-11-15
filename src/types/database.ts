@@ -750,6 +750,14 @@ export type Database = {
         Args: { p_source: Database["public"]["Tables"]["deals"]["Row"] }
         Returns: undefined
       }
+      deal_missing_fields: {
+        Args: {
+          p_check_relations?: boolean
+          p_deal: Database["public"]["Tables"]["deals"]["Row"]
+          p_stage_id: string
+        }
+        Returns: string[]
+      }
       log_timeline: {
         Args: {
           p_entity: Database["public"]["Enums"]["timeline_entity"]
