@@ -9,5 +9,7 @@ if (!url || !anonKey) {
 }
 
 export const supabase = createClient<Database>(url, anonKey, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' },
+  // 'implicit': links de convite gerados pelo painel/admin voltam com tokens no hash,
+  // que o fluxo 'pkce' rejeita ("Not a valid PKCE flow url").
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' },
 })
