@@ -7,7 +7,7 @@
 // Deploy com --no-verify-jwt: quem chama são sistemas externos; a autenticação é o token/assinatura acima.
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
-type Source = 'site' | 'webhook' | 'google' | 'meta'
+type Source = 'site' | 'webhook' | 'google' | 'meta' | 'evolution'
 type Normalized = Record<string, string | null>
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
@@ -241,6 +241,80 @@ async function handleMeta(req: Request) {
 }
 
 // ---------------------------------------------------------------------------
+// WhatsApp (Evolution API v2): evento messages.upsert. Token na URL (?token=) ou no header x-neqst-token.
+// Só mensagens 1:1 de números que já são contatos viram timeline; grupos e status são descartados.
+// ---------------------------------------------------------------------------
+type WaKey = { remoteJid?: string; remoteJidAlt?: string; senderPn?: string; participantAlt?: string; fromMe?: boolean; id?: string }
+type WaMessage = Record<string, Record<string, unknown> | string | undefined>
+type WaData = { key?: WaKey; pushName?: string; message?: WaMessage; messageType?: string; messageTimestamp?: number | string | { low?: number } }
+
+function waText(m: WaMessage | undefined): { text: string | null; type: string } | null {
+  if (!m) return null
+  const sub = (k: string) => (typeof m[k] === 'object' ? (m[k] as Record<string, unknown>) : undefined)
+  if (typeof m.conversation === 'string') return { text: m.conversation, type: 'text' }
+  if (sub('extendedTextMessage')) return { text: String(sub('extendedTextMessage')!.text ?? ''), type: 'text' }
+  if (sub('reactionMessage') || sub('protocolMessage') || sub('senderKeyDistributionMessage')) return null // reação, apagar, chaves: não entram
+  const media: [string, string][] = [
+    ['imageMessage', 'imagem'],
+    ['videoMessage', 'vídeo'],
+    ['audioMessage', 'áudio'],
+    ['documentMessage', 'documento'],
+    ['stickerMessage', 'figurinha'],
+    ['locationMessage', 'localização'],
+    ['contactMessage', 'contato'],
+  ]
+  for (const [k, label] of media) {
+    const s = sub(k)
+    if (s) {
+      const extra = str(s.caption) ?? str(s.fileName) ?? str(s.displayName)
+      return { text: `[${label}]${extra ? ` ${extra}` : ''}`, type: k.replace('Message', '') }
+    }
+  }
+  return { text: '[mensagem]', type: 'other' }
+}
+
+async function handleEvolution(req: Request) {
+  const token = new URL(req.url).searchParams.get('token') ?? req.headers.get('x-neqst-token') ?? ''
+  if (!safeEqual(token, await secret('evolution_token'))) throw new HttpError(401, 'Token inválido.')
+  const { data } = await readBody(req)
+  const event = String(data.event ?? '').toLowerCase().replace('_', '.')
+  if (event !== 'messages.upsert') return json({ ignored: event || 'sem evento' })
+
+  const items: WaData[] = Array.isArray(data.data) ? (data.data as WaData[]) : data.data ? [data.data as WaData] : []
+  const results = []
+  for (const d of items) {
+    const key = d.key ?? {}
+    const jids = [key.remoteJid, key.remoteJidAlt, key.senderPn, key.participantAlt].filter((j): j is string => !!j)
+    if (jids.some((j) => j.endsWith('@g.us') || j.endsWith('@broadcast') || j.endsWith('@newsletter'))) continue // grupos, status, canais
+    const content = waText(d.message)
+    if (!content || !key.id) continue
+    const phoneJid = jids.find((j) => j.endsWith('@s.whatsapp.net'))
+    const ts = typeof d.messageTimestamp === 'object' ? d.messageTimestamp?.low : Number(d.messageTimestamp)
+    const normalized: Normalized = {
+      phone: phoneJid ? `+${phoneJid.split('@')[0].replace(/\D/g, '')}` : null,
+      text: content.text,
+      type: content.type,
+      from_me: key.fromMe ? 'true' : 'false',
+      wa_id: key.id,
+      push_name: str(d.pushName),
+      ts: ts && Number.isFinite(ts) ? String(ts) : null,
+    }
+    const row = { source: 'evolution', external_id: key.id, payload: { ...data, data: d }, normalized }
+    const { data: ins, error } = await db.from('inbound_events').insert(row).select('id').single()
+    let eventId = ins?.id as string | undefined
+    if (error) {
+      if (error.code !== '23505') throw error
+      const { data: existing } = await db.from('inbound_events').select('id').eq('source', 'evolution').eq('external_id', key.id).single()
+      eventId = existing?.id
+    }
+    if (!eventId) continue
+    const { data: contactId } = await db.rpc('process_whatsapp_event', { p_event_id: eventId })
+    results.push({ event_id: eventId, contact_id: contactId })
+  }
+  return json({ received: results.length, results })
+}
+
+// ---------------------------------------------------------------------------
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const source = new URL(req.url).pathname.split('/').filter(Boolean).pop() as Source | 'inbound'
@@ -249,7 +323,8 @@ Deno.serve(async (req) => {
     if (req.method !== 'POST') return json({ error: 'Use POST' }, 405)
     if (source === 'site' || source === 'webhook') return await handleGeneric(req, source)
     if (source === 'google') return await handleGoogle(req)
-    return json({ error: 'Use /inbound/site, /inbound/webhook, /inbound/google ou /inbound/meta' }, 404)
+    if (source === 'evolution') return await handleEvolution(req)
+    return json({ error: 'Use /inbound/site, /inbound/webhook, /inbound/google, /inbound/meta ou /inbound/evolution' }, 404)
   } catch (err) {
     const status = err instanceof HttpError ? err.status : 500
     const message = err instanceof Error ? err.message : String(err)

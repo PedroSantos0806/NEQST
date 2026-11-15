@@ -1079,6 +1079,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      br_phone_variants: { Args: { p_phone: string }; Returns: string[] }
       create_deal_from_contact: {
         Args: { p_contact_id: string; p_pipeline_id: string }
         Returns: string
@@ -1106,7 +1107,17 @@ export type Database = {
         }
         Returns: undefined
       }
+      log_whatsapp: {
+        Args: {
+          p_actor?: string
+          p_contact: string
+          p_direction: string
+          p_payload: Json
+        }
+        Returns: string
+      }
       process_inbound_event: { Args: { p_event_id: string }; Returns: string }
+      process_whatsapp_event: { Args: { p_event_id: string }; Returns: string }
       qualify_prospect: {
         Args: {
           p_company_id?: string
@@ -1116,6 +1127,7 @@ export type Database = {
         }
         Returns: string
       }
+      reprocess_inbound_event: { Args: { p_event_id: string }; Returns: string }
     }
     Enums: {
       activity_type:

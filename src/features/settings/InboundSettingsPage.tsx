@@ -88,7 +88,7 @@ export function InboundSettingsPage() {
         </p>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card title="Site e webhook genérico">
           <CopyValue label="URL do site" value={inboundUrl('site')} />
           <CopyValue label="URL de webhook" value={inboundUrl('webhook')} />
@@ -112,6 +112,19 @@ export function InboundSettingsPage() {
           <p className="text-xs text-muted-foreground">
             No app do Meta: Webhooks → Page → campo <code>leadgen</code>. Depois grave nos secrets do Supabase o{' '}
             <code>META_APP_SECRET</code> (do app) e o <code>META_PAGE_TOKEN</code> (token de longa duração da Página).
+          </p>
+        </Card>
+        <Card title="WhatsApp (Evolution)">
+          <CopyValue
+            label="URL do webhook (com token)"
+            value={t ? `${inboundUrl('evolution')}?token=${t.evolution_token}` : undefined}
+            secret
+          />
+          <p className="text-xs text-muted-foreground">
+            No Evolution Manager → instância → Webhook: ative, cole a URL, marque o evento <code>MESSAGES_UPSERT</code> e deixe
+            “Webhook base64” desligado. Para enviar pela ficha, grave nos secrets do Supabase <code>EVOLUTION_URL</code>,{' '}
+            <code>EVOLUTION_API_KEY</code> e <code>EVOLUTION_INSTANCE</code>. Só mensagens de números que já são contatos entram no
+            CRM.
           </p>
         </Card>
       </div>
@@ -170,7 +183,7 @@ export function InboundSettingsPage() {
                         {e.attempts > 1 && <span className="ml-1 text-xs text-muted-foreground">{e.attempts}×</span>}
                       </TableCell>
                       <TableCell>
-                        {(e.status === 'failed' || e.status === 'pending') && (
+                        {(e.status === 'failed' || e.status === 'pending' || (e.source === 'evolution' && e.status === 'ignored')) && (
                           <Button
                             size="sm"
                             variant="outline"

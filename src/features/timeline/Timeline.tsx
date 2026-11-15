@@ -1,4 +1,4 @@
-import { ArrowRight, CircleCheck, CircleDot, Inbox, MessageSquareText, Plus, Trophy, XCircle } from 'lucide-react'
+import { ArrowRight, CircleCheck, CircleDot, Inbox, MessageCircle, MessageSquareText, Plus, Trophy, XCircle } from 'lucide-react'
 import { profileLabel } from '@/lib/format'
 import type { TimelineEvent } from './api'
 
@@ -52,6 +52,10 @@ function describe(e: TimelineEvent, l: Lookup) {
         detail: str(p, 'message'),
       }
     }
+    case 'whatsapp_in':
+      return { icon: MessageCircle, text: 'WhatsApp recebido', detail: str(p, 'text') }
+    case 'whatsapp_out':
+      return { icon: MessageCircle, text: str(p, 'sent_via') === 'phone' ? 'WhatsApp enviado pelo celular' : 'WhatsApp enviado', detail: str(p, 'text') }
     case 'activity_done':
       return { icon: CircleCheck, text: `Atividade concluída: ${str(p, 'title') ?? ''}` }
     default:

@@ -5,7 +5,7 @@ import { unwrap } from '@/lib/errors'
 import type { Tables } from '@/types/database'
 
 export type InboundEvent = Tables<'inbound_events'> & { contact: { id: string; name: string } | null }
-export type InboundTokens = { site_token: string; google_key: string; meta_verify_token: string }
+export type InboundTokens = { site_token: string; google_key: string; meta_verify_token: string; evolution_token: string }
 
 export const inboundUrl = (source: string) => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/inbound/${source}`
 
@@ -36,7 +36,7 @@ export function useInboundEvents() {
 export function useReprocessEvent() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (id: string) => unwrap(await supabase.rpc('process_inbound_event', { p_event_id: id })),
+    mutationFn: async (id: string) => unwrap(await supabase.rpc('reprocess_inbound_event', { p_event_id: id })),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['inbound-events'] })
       qc.invalidateQueries({ queryKey: ['contacts'] })

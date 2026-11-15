@@ -19,6 +19,7 @@ import { useDealFull, useLostReasons, usePipelines, useReopenDeal, useSetStage }
 import { DealFormDialog } from './DealFormDialog'
 import { LostDealDialog, WonDealDialog } from './CloseDealDialogs'
 import { daysInStage, isStale } from './board-utils'
+import { WhatsAppPanel } from '@/features/whatsapp/WhatsAppPanel'
 
 const STATUS_LABEL = { open: 'Aberto', won: 'Ganho', lost: 'Perdido' } as const
 const dateFmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -40,6 +41,7 @@ export function DealDetailPage() {
   const [closing, setClosing] = useState<'won' | 'lost' | null>(null)
   const [note, setNote] = useState('')
   const [showDone, setShowDone] = useState(false)
+  const [waContactId, setWaContactId] = useState<string | null>(null)
 
   const allStages = useMemo(() => (pipelines.data ?? []).flatMap((p) => p.stages), [pipelines.data])
   const lookup = useMemo(
@@ -245,6 +247,33 @@ export function DealDetailPage() {
               )}
             </div>
           </div>
+
+          {(() => {
+            const withPhone = d.deal_contacts.map((dc) => dc.contact).filter((c): c is NonNullable<typeof c> => !!c?.phone)
+            if (!withPhone.length) return null
+            const current = withPhone.find((c) => c.id === waContactId) ?? withPhone[0]
+            return (
+              <div className="flex flex-col gap-2">
+                {withPhone.length > 1 && (
+                  <div role="tablist" aria-label="Conversa com" className="flex flex-wrap gap-1">
+                    {withPhone.map((c) => (
+                      <button
+                        key={c.id}
+                        role="tab"
+                        type="button"
+                        aria-selected={c.id === current.id}
+                        onClick={() => setWaContactId(c.id)}
+                        className={cn('rounded-md px-2.5 py-1 text-sm font-medium', c.id === current.id ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground')}
+                      >
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <WhatsAppPanel key={current.id} contact={current} />
+              </div>
+            )
+          })()}
 
           <div>
             <div className="mb-3 flex items-center justify-between gap-2">
