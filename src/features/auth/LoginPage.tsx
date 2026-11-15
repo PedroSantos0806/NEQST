@@ -17,9 +17,27 @@ const schema = z.object({
 })
 type FormValues = z.infer<typeof schema>
 
+const NOT_INVITED = 'Este e-mail não tem acesso. Peça um convite ao administrador.'
+
+function isNotInvited(code?: string | null, message?: string | null) {
+  return code === 'otp_disabled' || code === 'signup_disabled' || /signups? not allowed/i.test(message ?? '')
+}
+
+// Erro devolvido pelo Supabase na URL após o login com Google (ex.: e-mail não convidado).
+function readRedirectError() {
+  const params = new URLSearchParams(window.location.search)
+  const hash = new URLSearchParams(window.location.hash.slice(1))
+  const code = params.get('error_code') ?? hash.get('error_code')
+  const description = params.get('error_description') ?? hash.get('error_description')
+  if (!code && !description) return null
+  window.history.replaceState(null, '', window.location.pathname)
+  return isNotInvited(code, description) ? NOT_INVITED : (description ?? 'Falha no login')
+}
+
 export function LoginPage() {
   const { session } = useAuth()
   const [sentTo, setSentTo] = useState<string | null>(null)
+  const [redirectError] = useState(readRedirectError)
   const {
     register,
     handleSubmit,
@@ -31,10 +49,12 @@ export function LoginPage() {
   const onMagicLink = async ({ email }: FormValues) => {
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim().toLowerCase(),
-      options: { emailRedirectTo: window.location.origin },
+      // Acesso só por convite: nunca cria conta a partir da tela de login.
+      options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
     })
     if (error) {
-      toast.error('Não foi possível enviar o link', { description: error.message })
+      if (isNotInvited(error.code, error.message)) toast.error(NOT_INVITED)
+      else toast.error('Não foi possível enviar o link', { description: error.message })
       return
     }
     setSentTo(email)
@@ -60,6 +80,11 @@ export function LoginPage() {
             <CardDescription>Acesso restrito ao time NEQST.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
+            {redirectError && (
+              <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                {redirectError}
+              </p>
+            )}
             {sentTo ? (
               <p className="rounded-lg bg-muted p-3 text-sm">
                 Enviamos um link de acesso para <strong>{sentTo}</strong>. Abra o e-mail e clique no link
