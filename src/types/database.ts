@@ -445,6 +445,95 @@ export type Database = {
           },
         ]
       }
+      external_refs: {
+        Row: {
+          created_at: string
+          entity: Database["public"]["Enums"]["timeline_entity"]
+          entity_id: string
+          external_id: string
+          id: string
+          system: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          entity: Database["public"]["Enums"]["timeline_entity"]
+          entity_id: string
+          external_id: string
+          id?: string
+          system: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          entity?: Database["public"]["Enums"]["timeline_entity"]
+          entity_id?: string
+          external_id?: string
+          id?: string
+          system?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      inbound_events: {
+        Row: {
+          attempts: number
+          contact_id: string | null
+          created_at: string
+          error: string | null
+          external_id: string | null
+          id: string
+          is_test: boolean
+          normalized: Json
+          payload: Json
+          processed_at: string | null
+          received_at: string
+          source: Database["public"]["Enums"]["inbound_source"]
+          status: Database["public"]["Enums"]["inbound_status"]
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          contact_id?: string | null
+          created_at?: string
+          error?: string | null
+          external_id?: string | null
+          id?: string
+          is_test?: boolean
+          normalized?: Json
+          payload: Json
+          processed_at?: string | null
+          received_at?: string
+          source: Database["public"]["Enums"]["inbound_source"]
+          status?: Database["public"]["Enums"]["inbound_status"]
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          contact_id?: string | null
+          created_at?: string
+          error?: string | null
+          external_id?: string | null
+          id?: string
+          is_test?: boolean
+          normalized?: Json
+          payload?: Json
+          processed_at?: string | null
+          received_at?: string
+          source?: Database["public"]["Enums"]["inbound_source"]
+          status?: Database["public"]["Enums"]["inbound_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inbound_events_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       locations: {
         Row: {
           address: string | null
@@ -990,6 +1079,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_deal_from_contact: {
+        Args: { p_contact_id: string; p_pipeline_id: string }
+        Returns: string
+      }
       create_onboarding_deal: {
         Args: { p_source: Database["public"]["Tables"]["deals"]["Row"] }
         Returns: undefined
@@ -1002,6 +1095,8 @@ export type Database = {
         }
         Returns: string[]
       }
+      inbound_secret: { Args: { p_name: string }; Returns: string }
+      inbound_settings: { Args: never; Returns: Json }
       log_timeline: {
         Args: {
           p_entity: Database["public"]["Enums"]["timeline_entity"]
@@ -1011,6 +1106,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      process_inbound_event: { Args: { p_event_id: string }; Returns: string }
       qualify_prospect: {
         Args: {
           p_company_id?: string
@@ -1040,6 +1136,14 @@ export type Database = {
         | "multiselect"
       deal_contact_role: "decision_maker" | "influencer" | "operational"
       deal_status: "open" | "won" | "lost"
+      inbound_source:
+        | "meta"
+        | "google"
+        | "site"
+        | "webhook"
+        | "evolution"
+        | "gmail"
+      inbound_status: "pending" | "processed" | "failed" | "ignored"
       lifecycle_stage: "lead" | "qualified_lead" | "opportunity" | "customer"
       location_status: "prospect" | "pilot" | "client"
       pipeline_type: "sales" | "onboarding"
@@ -1201,6 +1305,15 @@ export const Constants = {
       ],
       deal_contact_role: ["decision_maker", "influencer", "operational"],
       deal_status: ["open", "won", "lost"],
+      inbound_source: [
+        "meta",
+        "google",
+        "site",
+        "webhook",
+        "evolution",
+        "gmail",
+      ],
+      inbound_status: ["pending", "processed", "failed", "ignored"],
       lifecycle_stage: ["lead", "qualified_lead", "opportunity", "customer"],
       location_status: ["prospect", "pilot", "client"],
       pipeline_type: ["sales", "onboarding"],

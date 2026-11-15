@@ -50,3 +50,15 @@ export function useDeleteContact() {
     },
   })
 }
+
+/** Contato vira oportunidade → negócio na 1ª etapa do funil. */
+export function useCreateDealFromContact() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (v: { contactId: string; pipelineId: string }) =>
+      unwrap(await supabase.rpc('create_deal_from_contact', { p_contact_id: v.contactId, p_pipeline_id: v.pipelineId })) as string,
+    onSuccess: () => {
+      for (const k of ['contacts', 'board', 'deals-table', 'contact-deals', 'timeline']) qc.invalidateQueries({ queryKey: [k] })
+    },
+  })
+}

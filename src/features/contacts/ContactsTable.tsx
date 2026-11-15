@@ -37,7 +37,11 @@ export function ContactsTable({
         <TableBody>
           {rows.map((c) => (
             <TableRow key={c.id}>
-              <TableCell className="font-medium">{c.name}</TableCell>
+              <TableCell className="font-medium">
+                <Link to={`/contatos/${c.id}`} className="underline-offset-4 hover:underline">
+                  {c.name}
+                </Link>
+              </TableCell>
               {showCompany && (
                 <TableCell>
                   {c.company ? (

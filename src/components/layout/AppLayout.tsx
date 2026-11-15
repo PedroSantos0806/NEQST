@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Building2, CheckSquare, Columns3, LogOut, MapPin, Radar, Users } from 'lucide-react'
+import { Building2, CheckSquare, Columns3, Inbox, LogOut, MapPin, Radar, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/features/auth/auth-context'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -19,6 +19,7 @@ const NAV = [
   { to: '/locais', label: 'Locais', icon: MapPin },
   { to: '/tarefas', label: 'Tarefas', icon: CheckSquare },
   { to: '/prospeccao', label: 'Prospecção', icon: Radar },
+  { to: '/entrada-de-leads', label: 'Entrada de leads', icon: Inbox },
 ]
 
 function initials(text: string) {

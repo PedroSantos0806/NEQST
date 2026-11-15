@@ -14,6 +14,8 @@ import { BoardPage } from '@/features/deals/BoardPage'
 import { DealDetailPage } from '@/features/deals/DealDetailPage'
 import { TasksPage } from '@/features/activities/TasksPage'
 import { ProspectingPage } from '@/features/prospecting/ProspectingPage'
+import { ContactDetailPage } from '@/features/contacts/ContactDetailPage'
+import { InboundSettingsPage } from '@/features/settings/InboundSettingsPage'
 
 export default function App() {
   return (
@@ -26,6 +28,8 @@ export default function App() {
               <Route element={<AppLayout />}>
                 <Route index element={<BoardPage />} />
                 <Route path="contatos" element={<ContactsPage />} />
+                <Route path="contatos/:id" element={<ContactDetailPage />} />
+                <Route path="entrada-de-leads" element={<InboundSettingsPage />} />
                 <Route path="empresas" element={<CompaniesPage />} />
                 <Route path="empresas/:id" element={<CompanyDetailPage />} />
                 <Route path="locais" element={<LocationsPage />} />

@@ -1,4 +1,4 @@
-import { ArrowRight, CircleCheck, CircleDot, MessageSquareText, Plus, Trophy, XCircle } from 'lucide-react'
+import { ArrowRight, CircleCheck, CircleDot, Inbox, MessageSquareText, Plus, Trophy, XCircle } from 'lucide-react'
 import { profileLabel } from '@/lib/format'
 import type { TimelineEvent } from './api'
 
@@ -11,7 +11,7 @@ type Lookup = {
 
 function str(payload: unknown, key: string): string | undefined {
   const v = (payload as Record<string, unknown> | null)?.[key]
-  return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : undefined
+  return typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : undefined
 }
 
 function describe(e: TimelineEvent, l: Lookup) {
@@ -42,6 +42,16 @@ function describe(e: TimelineEvent, l: Lookup) {
     }
     case 'note':
       return { icon: MessageSquareText, text: 'Nota', detail: str(p, 'excerpt') }
+    case 'conversion': {
+      const SOURCE: Record<string, string> = { site: 'site', webhook: 'webhook', google: 'Google Ads', meta: 'Meta' }
+      const src = SOURCE[str(p, 'source') ?? ''] ?? str(p, 'source') ?? ''
+      const camp = str(p, 'utm_campaign') ?? str(p, 'campaign')
+      return {
+        icon: Inbox,
+        text: `${str(p, 'new_contact') === 'true' ? 'Lead novo' : 'Nova conversão'} pelo ${src}${camp ? ` · ${camp}` : ''}`,
+        detail: str(p, 'message'),
+      }
+    }
     case 'activity_done':
       return { icon: CircleCheck, text: `Atividade concluída: ${str(p, 'title') ?? ''}` }
     default:
