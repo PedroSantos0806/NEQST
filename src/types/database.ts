@@ -780,6 +780,7 @@ export type Database = {
           company_type: Database["public"]["Enums"]["company_type"] | null
           created_at: string
           deal_id: string | null
+          dedupe_key: string | null
           discard_reason: string | null
           google_maps_uri: string | null
           google_place_id: string | null
@@ -792,6 +793,7 @@ export type Database = {
           rating_count: number | null
           raw: Json
           search_id: string | null
+          source: string
           state: string | null
           status: Database["public"]["Enums"]["prospect_status"]
           updated_at: string
@@ -804,6 +806,7 @@ export type Database = {
           company_type?: Database["public"]["Enums"]["company_type"] | null
           created_at?: string
           deal_id?: string | null
+          dedupe_key?: string | null
           discard_reason?: string | null
           google_maps_uri?: string | null
           google_place_id?: string | null
@@ -816,6 +819,7 @@ export type Database = {
           rating_count?: number | null
           raw?: Json
           search_id?: string | null
+          source?: string
           state?: string | null
           status?: Database["public"]["Enums"]["prospect_status"]
           updated_at?: string
@@ -828,6 +832,7 @@ export type Database = {
           company_type?: Database["public"]["Enums"]["company_type"] | null
           created_at?: string
           deal_id?: string | null
+          dedupe_key?: string | null
           discard_reason?: string | null
           google_maps_uri?: string | null
           google_place_id?: string | null
@@ -840,6 +845,7 @@ export type Database = {
           rating_count?: number | null
           raw?: Json
           search_id?: string | null
+          source?: string
           state?: string | null
           status?: Database["public"]["Enums"]["prospect_status"]
           updated_at?: string
