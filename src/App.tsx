@@ -7,6 +7,10 @@ import { RequireAuth } from '@/features/auth/RequireAuth'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { PagePlaceholder } from '@/components/layout/PagePlaceholder'
+import { CompaniesPage } from '@/features/companies/CompaniesPage'
+import { CompanyDetailPage } from '@/features/companies/CompanyDetailPage'
+import { LocationsPage } from '@/features/locations/LocationsPage'
+import { ContactsPage } from '@/features/contacts/ContactsPage'
 
 export default function App() {
   return (
@@ -27,36 +31,10 @@ export default function App() {
                     />
                   }
                 />
-                <Route
-                  path="contatos"
-                  element={
-                    <PagePlaceholder
-                      title="Contatos"
-                      sprint="Sprint 1"
-                      description="Cadastro de contatos e leads, com empresa, cargo e ciclo de vida."
-                    />
-                  }
-                />
-                <Route
-                  path="empresas"
-                  element={
-                    <PagePlaceholder
-                      title="Empresas"
-                      sprint="Sprint 1"
-                      description="Operadores públicos, clubes, condomínios, construtoras e marcas."
-                    />
-                  }
-                />
-                <Route
-                  path="locais"
-                  element={
-                    <PagePlaceholder
-                      title="Locais"
-                      sprint="Sprint 1"
-                      description="Parques e unidades de cada empresa, com quadras, pisos e internet."
-                    />
-                  }
-                />
+                <Route path="contatos" element={<ContactsPage />} />
+                <Route path="empresas" element={<CompaniesPage />} />
+                <Route path="empresas/:id" element={<CompanyDetailPage />} />
+                <Route path="locais" element={<LocationsPage />} />
                 <Route
                   path="tarefas"
                   element={
