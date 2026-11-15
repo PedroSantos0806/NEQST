@@ -12,7 +12,11 @@ export function useBoardRealtime() {
     let timer: ReturnType<typeof setTimeout> | undefined
     const refresh = () => {
       clearTimeout(timer)
-      timer = setTimeout(() => qc.invalidateQueries({ queryKey: ['board'] }), 150)
+      timer = setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ['board'] })
+        qc.invalidateQueries({ queryKey: ['deals-table'] })
+        qc.invalidateQueries({ queryKey: ['activities'] })
+      }, 150)
     }
     const channel = supabase
       .channel('board')

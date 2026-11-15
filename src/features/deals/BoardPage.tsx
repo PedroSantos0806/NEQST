@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { ActivityFormDialog } from '@/features/activities/ActivityFormDialog'
 import { useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { toast } from 'sonner'
@@ -11,6 +12,7 @@ import { friendlyError, missingRequiredFields } from '@/lib/errors'
 import { boardKey, useBoard, useMoveDeal, usePipelines, type BoardDeal } from './api'
 import { Board, type MoveRequest } from './Board'
 import { DealFormDialog } from './DealFormDialog'
+import { DealsTableView } from './DealsTableView'
 import { LostDealDialog, WonDealDialog } from './CloseDealDialogs'
 import type { CardActions } from './DealCard'
 import { isStale } from './board-utils'
@@ -25,6 +27,7 @@ export function BoardPage() {
     () => pipelines.data?.find((p) => p.id === params.get('funil')) ?? pipelines.data?.[0],
     [pipelines.data, params],
   )
+  const view = params.get('vista') === 'tabela' ? 'tabela' : 'quadro'
   const board = useBoard(pipeline?.id)
   const move = useMoveDeal(pipeline?.id)
   const qc = useQueryClient()
@@ -33,15 +36,18 @@ export function BoardPage() {
   const [editing, setEditing] = useState<EditState>(null)
   const [losing, setLosing] = useState<BoardDeal | null>(null)
   const [winning, setWinning] = useState<BoardDeal | null>(null)
+  const [nextFor, setNextFor] = useState<{ dealId: string; dealTitle: string; reason: string; suggestedTitle?: string } | null>(null)
+  const navigate = useNavigate()
 
   const isSales = pipeline?.type === 'sales'
   const actions = useMemo<CardActions>(
     () => ({
+      onOpen: (d) => navigate(`/negocios/${d.id}`),
       onEdit: (d) => setEditing({ dealId: d.id }),
       onWon: isSales ? setWinning : undefined,
       onLost: isSales ? setLosing : undefined,
     }),
-    [isSales],
+    [isSales, navigate],
   )
 
   const onMove = useCallback(
@@ -68,6 +74,18 @@ export function BoardPage() {
       move.mutate(
         { id: deal.id, stage_id: stageId, position },
         {
+          onSuccess: () => {
+            // Mudou de etapa → pede a próxima atividade (sugere o critério de saída da nova etapa).
+            if (deal.stage_id !== stageId) {
+              const stage = pipeline.stages.find((s) => s.id === stageId)
+              setNextFor({
+                dealId: deal.id,
+                dealTitle: deal.title,
+                reason: `Agora em ${stage?.name}`,
+                suggestedTitle: stage?.exit_criteria ?? undefined,
+              })
+            }
+          },
           onError: (err) => {
             if (previous) qc.setQueryData(key, previous)
             const missing = missingRequiredFields(err)
@@ -110,7 +128,7 @@ export function BoardPage() {
             key={p.id}
             type="button"
             aria-current={p.id === pipeline.id ? 'page' : undefined}
-            onClick={() => setParams({ funil: p.id })}
+            onClick={() => setParams(view === 'tabela' ? { funil: p.id, vista: 'tabela' } : { funil: p.id })}
             className={cn(
               'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
               p.id === pipeline.id
@@ -123,6 +141,27 @@ export function BoardPage() {
         ))}
       </nav>
 
+      <div role="group" aria-label="Vista" className="flex self-start rounded-lg border border-border bg-card p-0.5">
+        {(['quadro', 'tabela'] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            aria-pressed={view === v}
+            onClick={() => setParams(v === 'tabela' ? { funil: pipeline.id, vista: 'tabela' } : { funil: pipeline.id })}
+            className={cn(
+              'rounded-md px-3 py-1 text-sm font-medium',
+              view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {v === 'quadro' ? 'Quadro' : 'Tabela'}
+          </button>
+        ))}
+      </div>
+
+      {view === 'tabela' ? (
+        <DealsTableView pipeline={pipeline} />
+      ) : (
+        <>
       <dl className="flex flex-wrap gap-x-8 gap-y-2">
         <Stat label="Negócios abertos" value={String(deals.length)} />
         <Stat label="Valor em aberto" value={formatBRL(total)} />
@@ -144,6 +183,8 @@ export function BoardPage() {
           onAdd={(stageId) => setEditing({ stageId })}
         />
       )}
+        </>
+      )}
 
       <DealFormDialog
         open={editing !== null}
@@ -152,6 +193,17 @@ export function BoardPage() {
         dealId={editing?.dealId}
         stageId={editing?.stageId}
         missing={editing?.missing}
+        onCreated={(id, title) => {
+          const stage = pipeline.stages.find((s) => s.id === editing?.stageId) ?? pipeline.stages[0]
+          setNextFor({ dealId: id, dealTitle: title, reason: 'Negócio criado', suggestedTitle: stage?.exit_criteria ?? undefined })
+        }}
+      />
+      <ActivityFormDialog
+        open={nextFor !== null}
+        onOpenChange={(o) => !o && setNextFor(null)}
+        dealId={nextFor?.dealId}
+        dealTitle={nextFor?.dealTitle}
+        next={nextFor ? { reason: nextFor.reason, suggestedTitle: nextFor.suggestedTitle } : undefined}
       />
       <LostDealDialog deal={losing} onClose={() => setLosing(null)} />
       <WonDealDialog deal={winning} onClose={() => setWinning(null)} />

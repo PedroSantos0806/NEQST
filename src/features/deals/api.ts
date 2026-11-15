@@ -105,7 +105,11 @@ export function useCloseDeal() {
         | { id: string; status: 'won' }
         | { id: string; status: 'lost'; lost_reason_id: string; lost_note: string | null },
     ) => unwrap(await supabase.from('deals').update(v).eq('id', v.id)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['board'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['board'] })
+      qc.invalidateQueries({ queryKey: ['deals'] })
+      qc.invalidateQueries({ queryKey: ['timeline'] })
+    },
   })
 }
 
@@ -185,4 +189,97 @@ export function positionBetween(before: number | undefined, after: number | unde
   if (before == null) return after! - 1000
   if (after == null) return before + 1000
   return (before + after) / 2
+}
+
+export type DealFull = Tables<'deals'> & {
+  company: { id: string; name: string } | null
+  owner: { full_name: string | null; email: string | null } | null
+  lost_reason: { name: string } | null
+  deal_locations: { location: { id: string; name: string; court_count: number | null } | null }[]
+  deal_contacts: {
+    role: Enums<'deal_contact_role'> | null
+    contact: { id: string; name: string; email: string | null; phone: string | null; job_title: string | null } | null
+  }[]
+}
+
+/** Negócio com tudo que a ficha mostra. */
+export function useDealFull(id: string | undefined) {
+  return useQuery({
+    queryKey: ['deals', id, 'full'],
+    enabled: !!id,
+    queryFn: async () =>
+      unwrap(
+        await supabase
+          .from('deals')
+          .select(
+            `*, company:companies(id, name), owner:profiles(full_name, email), lost_reason:lost_reasons(name),
+             deal_locations(location:locations(id, name, court_count)),
+             deal_contacts(role, contact:contacts(id, name, email, phone, job_title))`,
+          )
+          .eq('id', id!)
+          .maybeSingle(),
+      ) as DealFull | null,
+  })
+}
+
+/** Muda só a etapa (ficha do negócio). */
+export function useSetStage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (v: { id: string; stage_id: string }) =>
+      unwrap(await supabase.from('deals').update({ stage_id: v.stage_id }).eq('id', v.id)),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['deals'] })
+      qc.invalidateQueries({ queryKey: ['board'] })
+      qc.invalidateQueries({ queryKey: ['timeline'] })
+    },
+  })
+}
+
+export function useReopenDeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => unwrap(await supabase.from('deals').update({ status: 'open' }).eq('id', id)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['deals'] })
+      qc.invalidateQueries({ queryKey: ['board'] })
+      qc.invalidateQueries({ queryKey: ['timeline'] })
+    },
+  })
+}
+
+/** Vista tabela: negócios de um funil por situação (inclui ganhos/perdidos). */
+export function useDealsTable(pipelineId: string | undefined, status: Enums<'deal_status'> | 'all') {
+  return useQuery({
+    queryKey: ['deals-table', pipelineId, status],
+    enabled: !!pipelineId,
+    queryFn: async () => {
+      let q = supabase
+        .from('deals')
+        .select(BOARD_SELECT)
+        .eq('pipeline_id', pipelineId!)
+        .is('activities.done_at', null)
+        .order('updated_at', { ascending: false })
+        .order('due_at', { referencedTable: 'activities', ascending: true, nullsFirst: false })
+      if (status !== 'all') q = q.eq('status', status)
+      return unwrap(await q) as unknown as BoardDeal[]
+    },
+  })
+}
+
+/** Negócios abertos (todos os funis) sem nenhuma atividade em aberto. */
+export function useDealsWithoutNext() {
+  return useQuery({
+    queryKey: ['deals-table', 'without-next'],
+    queryFn: async () => {
+      const rows = unwrap(
+        await supabase
+          .from('deals')
+          .select('id, title, pipeline_id, company:companies(name), activities(id)')
+          .eq('status', 'open')
+          .is('activities.done_at', null),
+      ) as unknown as { id: string; title: string; pipeline_id: string; company: { name: string } | null; activities: { id: string }[] }[]
+      return rows.filter((r) => r.activities.length === 0)
+    },
+  })
 }

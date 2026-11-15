@@ -62,9 +62,11 @@ type Props = {
   stageId?: string
   /** Campos que o banco exigiu ao tentar avançar (mostrados em destaque). */
   missing?: string[]
+  /** Chamado após criar (para pedir a próxima atividade). */
+  onCreated?: (dealId: string, title: string) => void
 }
 
-export function DealFormDialog({ open, onOpenChange, pipeline, dealId, stageId, missing }: Props) {
+export function DealFormDialog({ open, onOpenChange, pipeline, dealId, stageId, missing, onCreated }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92svh] overflow-y-auto sm:max-w-2xl">
@@ -79,7 +81,15 @@ export function DealFormDialog({ open, onOpenChange, pipeline, dealId, stageId, 
             Para avançar de etapa, preencha: <strong>{missing.map(requiredFieldLabel).join(', ')}</strong>.
           </p>
         )}
-        {open && <DealFormLoader pipeline={pipeline} dealId={dealId} stageId={stageId} onDone={() => onOpenChange(false)} />}
+        {open && (
+          <DealFormLoader
+            pipeline={pipeline}
+            dealId={dealId}
+            stageId={stageId}
+            onDone={() => onOpenChange(false)}
+            onCreated={onCreated}
+          />
+        )}
       </DialogContent>
     </Dialog>
   )
@@ -90,11 +100,13 @@ function DealFormLoader({
   dealId,
   stageId,
   onDone,
+  onCreated,
 }: {
   pipeline: Pipeline
   dealId?: string
   stageId?: string
   onDone: () => void
+  onCreated?: Props['onCreated']
 }) {
   const deal = useDeal(dealId)
   const companies = useCompanyOptions()
@@ -112,6 +124,7 @@ function DealFormLoader({
       companies={companies.data ?? []}
       profiles={profiles.data ?? []}
       onDone={onDone}
+      onCreated={onCreated}
     />
   )
 }
@@ -123,6 +136,7 @@ function DealForm({
   companies,
   profiles,
   onDone,
+  onCreated,
 }: {
   pipeline: Pipeline
   deal?: ReturnType<typeof useDeal>['data']
@@ -130,6 +144,7 @@ function DealForm({
   companies: { id: string; name: string }[]
   profiles: { id: string; full_name: string | null; email: string | null }[]
   onDone: () => void
+  onCreated?: Props['onCreated']
 }) {
   const { user } = useAuth()
   const save = useSaveDeal()
@@ -197,9 +212,10 @@ function DealForm({
           contacts: Object.entries(contactRoles).map(([contact_id, role]) => ({ contact_id, role })),
         },
         {
-          onSuccess: () => {
+          onSuccess: (saved) => {
             toast.success(deal ? 'Negócio atualizado' : 'Negócio criado')
             onDone()
+            if (!deal) onCreated?.(saved.id, v.title)
           },
           onError: (err) => toast.error('Não foi possível salvar o negócio', { description: friendlyError(err) }),
         },

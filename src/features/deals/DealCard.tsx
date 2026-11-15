@@ -13,6 +13,8 @@ import type { BoardDeal, Stage } from './api'
 import { daysInStage, formatShortDate, isOverdue, isStale, nextActivity } from './board-utils'
 
 export type CardActions = {
+  /** Clique no card: abre a ficha. */
+  onOpen: (deal: BoardDeal) => void
   onEdit: (deal: BoardDeal) => void
   onWon?: (deal: BoardDeal) => void
   onLost?: (deal: BoardDeal) => void
@@ -72,6 +74,7 @@ export const DealCard = forwardRef<HTMLDivElement, Props>(function DealCard(
               <MoreHorizontal className="size-4" aria-hidden />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
+              <DropdownMenuItem onClick={() => actions.onOpen(deal)}>Abrir ficha</DropdownMenuItem>
               <DropdownMenuItem onClick={() => actions.onEdit(deal)}>Editar</DropdownMenuItem>
               {(actions.onWon || actions.onLost) && <DropdownMenuSeparator />}
               {actions.onWon && <DropdownMenuItem onClick={() => actions.onWon?.(deal)}>Marcar como ganho</DropdownMenuItem>}

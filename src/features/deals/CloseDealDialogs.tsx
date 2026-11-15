@@ -9,7 +9,9 @@ import { formatBRL } from '@/lib/format'
 import { toastError } from '@/lib/errors'
 import { useCloseDeal, useLostReasons, type BoardDeal } from './api'
 
-export function LostDealDialog({ deal, onClose }: { deal: BoardDeal | null; onClose: () => void }) {
+type ClosableDeal = Pick<BoardDeal, 'id' | 'title' | 'value'>
+
+export function LostDealDialog({ deal, onClose }: { deal: ClosableDeal | null; onClose: () => void }) {
   const reasons = useLostReasons()
   const close = useCloseDeal()
   const [reasonId, setReasonId] = useState('')
@@ -86,7 +88,7 @@ export function LostDealDialog({ deal, onClose }: { deal: BoardDeal | null; onCl
   )
 }
 
-export function WonDealDialog({ deal, onClose }: { deal: BoardDeal | null; onClose: () => void }) {
+export function WonDealDialog({ deal, onClose }: { deal: ClosableDeal | null; onClose: () => void }) {
   const close = useCloseDeal()
   const submit = async () => {
     if (!deal) return

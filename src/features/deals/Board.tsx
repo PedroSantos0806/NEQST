@@ -107,8 +107,8 @@ export function Board({ pipeline, deals, actions, onMove, onAdd }: Props) {
   const cardActions = useMemo<CardActions>(
     () => ({
       ...actions,
-      onEdit: (deal) => {
-        if (Date.now() - lastDragEnd.current > 250) actions.onEdit(deal)
+      onOpen: (deal) => {
+        if (Date.now() - lastDragEnd.current > 250) actions.onOpen(deal)
       },
     }),
     [actions],
@@ -222,9 +222,9 @@ function SortableCard({ deal, stage, actions }: { deal: BoardDeal; stage: Stage;
       actions={actions}
       dragging={isDragging}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      onClick={() => actions.onEdit(deal)}
+      onClick={() => actions.onOpen(deal)}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') actions.onEdit(deal)
+        if (e.key === 'Enter') actions.onOpen(deal)
         listeners?.onKeyDown?.(e)
       }}
       {...attributes}
