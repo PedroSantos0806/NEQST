@@ -16,7 +16,6 @@ import { Timeline } from '@/features/timeline/Timeline'
 import { useLostReasons, usePipelines } from '@/features/deals/api'
 import type { Enums } from '@/types/database'
 import { ContactFormDialog } from './ContactFormDialog'
-import { WhatsAppPanel } from '@/features/whatsapp/WhatsAppPanel'
 import { CreateDealFromContactDialog } from './CreateDealFromContactDialog'
 import type { ContactListItem } from './api'
 
@@ -147,7 +146,6 @@ export function ContactDetailPage() {
 
       <div className="grid gap-6 lg:grid-cols-[1fr_minmax(0,24rem)]">
         <div className="flex flex-col gap-6">
-          <WhatsAppPanel contact={c} />
           <div>
             <h2 className="mb-3 text-3xl text-primary">Negócios</h2>
             {deals.data?.length ? (

@@ -8,6 +8,14 @@ Docs de referência (fonte da verdade do produto):
 
 ---
 
+## Foco atual: CRM (desde 2026-11-16)
+
+**Pausados** por decisão do time, para focar no CRM: **Prospecção** (S3.5), **Entrada de leads** (S4) e **WhatsApp** (S5).
+- Saíram do menu, das rotas e das fichas; o código de front foi removido (recuperável no histórico do git).
+- Banco, dados (leads da prospecção, dossiês, eventos) e tokens no Vault **continuam guardados**.
+- As Edge Functions `inbound`, `whatsapp-send`, `prospect-search` e `prospect-research` foram **desligadas** (deploy removido); o código segue em `supabase/functions/` para religar com `npx supabase functions deploy <nome> --remote`.
+- Não retomar essas partes sem pedido explícito. As seções abaixo sobre elas valem só como referência.
+
 ## Stack
 
 | Camada | Tecnologia |

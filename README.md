@@ -7,11 +7,12 @@ Regras do produto, modelo de dados, funis e decisões: **[CLAUDE.md](CLAUDE.md)*
 
 - **Funis** (tela inicial): kanban dos 4 funis com arrastar e soltar, totais por coluna, alerta de parado,
   campos obrigatórios por etapa, ganho/perda e atualização ao vivo; vista em tabela com filtros.
-- **Ficha do negócio**: etapas, atividades, notas, linha do tempo e WhatsApp dos contatos.
+- **Ficha do negócio**: etapas, atividades, notas e linha do tempo.
 - **Contatos, Empresas e Locais** (parques/unidades), com ficha do contato e "Criar negócio".
 - **Tarefas**: minhas e do time, atrasadas/hoje/próximas, e negócios sem próxima atividade.
-- **Prospecção**: leads frios do OpenStreetMap, lead manual ou CSV, dossiê por IA (Gemini) e qualificação.
-- **Entrada de leads**: webhooks de site, Google Ads, Meta Lead Ads e WhatsApp (Evolution), com dedupe.
+
+Pausados por enquanto (foco no CRM): Prospecção, Entrada de leads e WhatsApp. O banco e o código das Edge Functions
+ficam guardados; veja "Foco atual" no [CLAUDE.md](CLAUDE.md).
 
 ## Stack
 
