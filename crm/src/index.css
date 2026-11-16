@@ -1,0 +1,111 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/archivo";
+@import "@fontsource/bebas-neue";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Paleta NEQST (CLAUDE.md > Identidade visual) */
+@theme {
+  --color-forest: #2f4629;
+  --color-ink: #0a0e0b;
+  --color-mauve: #e6dde2;
+  --color-ochre: #c49051;
+  --color-sage: #74b69d;
+  --color-mist: #6d9cb7;
+}
+
+@theme inline {
+  --font-sans: 'Archivo Variable', system-ui, sans-serif;
+  --font-heading: 'Bebas Neue', var(--font-sans);
+  --font-display: 'Bebas Neue', var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
+  --radius-3xl: 12px;
+  --radius-4xl: 12px;
+}
+
+:root {
+  --radius: 10px;
+  --background: #e6dde2;          /* malva claro */
+  --foreground: #0a0e0b;          /* quase-preto */
+  --card: #f6f2f4;
+  --card-foreground: #0a0e0b;
+  --popover: #ffffff;
+  --popover-foreground: #0a0e0b;
+  --primary: #2f4629;             /* verde-floresta */
+  --primary-foreground: #f6f2f4;
+  --secondary: #d8ccd3;
+  --secondary-foreground: #0a0e0b;
+  --muted: #ddd2d8;
+  --muted-foreground: #4a4f4b;
+  --accent: #c49051;              /* ocre */
+  --accent-foreground: #0a0e0b;
+  --destructive: #b3432f;
+  --border: #cbbec5;
+  --input: #cbbec5;
+  --ring: #c49051;
+  --chart-1: #2f4629;
+  --chart-2: #c49051;
+  --chart-3: #74b69d;
+  --chart-4: #6d9cb7;
+  --chart-5: #0a0e0b;
+  --sidebar: #2f4629;
+  --sidebar-foreground: #e6dde2;
+  --sidebar-primary: #c49051;
+  --sidebar-primary-foreground: #0a0e0b;
+  --sidebar-accent: #3c5735;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #3c5735;
+  --sidebar-ring: #c49051;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  h1, h2, h3 {
+    @apply font-display tracking-wide;
+  }
+}
